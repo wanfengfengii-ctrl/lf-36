@@ -35,6 +35,11 @@ export function useFragmentOps() {
     const s = useAppStore.getState();
     const sc = s.activeSchemeId ? s.schemes[s.activeSchemeId] : null;
     if (!sc) return;
+    const frag = sc.fragmentMap[fragmentId];
+    if (frag?.locked) {
+      s.addToast('warning', '锁定的碎片无法修改编号');
+      return;
+    }
     const all = Object.values(sc.fragmentMap);
     const result = validateFragmentNo(newNo, fragmentId, all);
     if (!result.valid) {
@@ -48,14 +53,38 @@ export function useFragmentOps() {
   }, [updateFragment, persist, pushHistory]);
 
   const changePosition = useCallback((fragmentId: string, x: number, y: number) => {
+    const s = useAppStore.getState();
+    const scheme = s.activeSchemeId ? s.schemes[s.activeSchemeId] : null;
+    if (!scheme) return;
+    const frag = scheme.fragmentMap[fragmentId];
+    if (frag?.locked) {
+      s.addToast('warning', '锁定的碎片无法移动');
+      return;
+    }
     updateFragment(fragmentId, { x, y });
   }, [updateFragment]);
 
   const changeRotation = useCallback((fragmentId: string, rotation: number) => {
+    const s = useAppStore.getState();
+    const scheme = s.activeSchemeId ? s.schemes[s.activeSchemeId] : null;
+    if (!scheme) return;
+    const frag = scheme.fragmentMap[fragmentId];
+    if (frag?.locked) {
+      s.addToast('warning', '锁定的碎片无法旋转');
+      return;
+    }
     updateFragment(fragmentId, { rotation: validateRotation(rotation) });
   }, [updateFragment]);
 
   const changeOpacity = useCallback((fragmentId: string, opacity: number) => {
+    const s = useAppStore.getState();
+    const scheme = s.activeSchemeId ? s.schemes[s.activeSchemeId] : null;
+    if (!scheme) return;
+    const frag = scheme.fragmentMap[fragmentId];
+    if (frag?.locked) {
+      s.addToast('warning', '锁定的碎片无法调整透明度');
+      return;
+    }
     updateFragment(fragmentId, { opacity: validateOpacity(opacity) });
   }, [updateFragment]);
 
@@ -65,6 +94,10 @@ export function useFragmentOps() {
     if (!sc) return;
     const frag = sc.fragmentMap[fragmentId];
     if (!frag) return;
+    if (frag.locked) {
+      s.addToast('warning', '锁定的碎片无法修改裁边');
+      return;
+    }
     const result = validateCrop(crop, frag.originalWidth, frag.originalHeight);
     if (!result.valid) {
       s.addToast('warning', result.message!);
@@ -72,12 +105,15 @@ export function useFragmentOps() {
     updateFragmentCrop(fragmentId, result.clamped);
   }, [updateFragmentCrop]);
 
-  const finalizeTransform = useCallback(() => {
-    pushHistory();
+  const prepareTransform = useCallback((description?: string, action?: 'move' | 'rotate' | 'opacity' | 'crop') => {
+    pushHistory(description || '调整碎片', action || 'batch');
+  }, [pushHistory]);
+
+  const finalizeTransform = useCallback((description?: string, action?: 'move' | 'rotate' | 'opacity' | 'crop') => {
     persist();
     recalculateConflicts();
     recalculateEdgeFits();
-  }, [pushHistory, persist, recalculateConflicts, recalculateEdgeFits]);
+  }, [persist, recalculateConflicts, recalculateEdgeFits]);
 
   const importFiles = useCallback(async (files: FileList | File[]) => {
     const fileArray = Array.isArray(files) ? files : Array.from(files);
@@ -118,6 +154,7 @@ export function useFragmentOps() {
     changeRotation,
     changeOpacity,
     changeCrop,
+    prepareTransform,
     finalizeTransform,
     importFiles,
     getNextNo,

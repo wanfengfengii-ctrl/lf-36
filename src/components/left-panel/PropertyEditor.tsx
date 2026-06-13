@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Box,
   Typography,
@@ -48,6 +48,7 @@ const PropertyEditor: React.FC = () => {
     changeRotation,
     changeOpacity,
     changeCrop,
+    prepareTransform,
     finalizeTransform,
   } = useFragmentOps();
 
@@ -57,6 +58,7 @@ const PropertyEditor: React.FC = () => {
   const [localRotation, setLocalRotation] = useState(0);
   const [localOpacity, setLocalOpacity] = useState(1);
   const [localCrop, setLocalCrop] = useState<CropEdges>({ top: 0, right: 0, bottom: 0, left: 0 });
+  const transformStartedRef = useRef(false);
 
   useEffect(() => {
     if (fragment) {
@@ -66,10 +68,11 @@ const PropertyEditor: React.FC = () => {
       setLocalRotation(fragment.rotation);
       setLocalOpacity(fragment.opacity);
       setLocalCrop({ ...fragment.crop });
+      transformStartedRef.current = false;
     }
   }, [fragment?.id]);
 
-  const debouncedPush = useDebounce(finalizeTransform, 400);
+  const debouncedFinalize = useDebounce(finalizeTransform, 400);
 
   const handleNoChange = (value: string) => {
     const n = parseInt(value, 10);
@@ -83,34 +86,62 @@ const PropertyEditor: React.FC = () => {
 
   const handleXChange = (value: number) => {
     setLocalX(value);
-    if (fragment) changePosition(fragment.id, value, localY);
-    debouncedPush();
+    if (fragment) {
+      if (!transformStartedRef.current) {
+        prepareTransform('移动碎片', 'move');
+        transformStartedRef.current = true;
+      }
+      changePosition(fragment.id, value, localY);
+      debouncedFinalize();
+    }
   };
   const handleYChange = (value: number) => {
     setLocalY(value);
-    if (fragment) changePosition(fragment.id, localX, value);
-    debouncedPush();
+    if (fragment) {
+      if (!transformStartedRef.current) {
+        prepareTransform('移动碎片', 'move');
+        transformStartedRef.current = true;
+      }
+      changePosition(fragment.id, localX, value);
+      debouncedFinalize();
+    }
   };
 
   const handleRotationChange = (value: number) => {
     setLocalRotation(value);
-    if (fragment) changeRotation(fragment.id, value);
-    debouncedPush();
+    if (fragment) {
+      if (!transformStartedRef.current) {
+        prepareTransform('旋转碎片', 'rotate');
+        transformStartedRef.current = true;
+      }
+      changeRotation(fragment.id, value);
+      debouncedFinalize();
+    }
   };
 
   const handleOpacityChange = (value: number) => {
     setLocalOpacity(value);
-    if (fragment) changeOpacity(fragment.id, value);
-    debouncedPush();
+    if (fragment) {
+      if (!transformStartedRef.current) {
+        prepareTransform('调整透明度', 'opacity');
+        transformStartedRef.current = true;
+      }
+      changeOpacity(fragment.id, value);
+      debouncedFinalize();
+    }
   };
 
   const handleCropChange = useCallback((edge: keyof CropEdges, value: number) => {
     if (!fragment) return;
+    if (!transformStartedRef.current) {
+      prepareTransform('裁边调整', 'crop');
+      transformStartedRef.current = true;
+    }
     const newCrop = { ...localCrop, [edge]: Math.max(0, value) };
     setLocalCrop(newCrop);
     changeCrop(fragment.id, newCrop);
-    debouncedPush();
-  }, [fragment, localCrop, changeCrop, debouncedPush]);
+    debouncedFinalize();
+  }, [fragment, localCrop, changeCrop, prepareTransform, debouncedFinalize]);
 
   if (!fragment) {
     return (

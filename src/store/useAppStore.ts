@@ -1,15 +1,20 @@
 import { create } from 'zustand';
 import type {
-  AppState, Fragment, Scheme, OverlapInfo, EdgeFitScore, HistoryEntry, ToastMessage, CropEdges } from '../types';
+  AppState, Fragment, Scheme, OverlapInfo, EdgeFitScore, HistoryEntry, ToastMessage, CropEdges,
+  SnapLine, ReferenceLine, SchemeSnapshot, DiffResult, AlignmentVerification, UndoRedoAction,
+  MagnifierState, RulerState, Point
+} from '../types';
 import { loadFromStorage, saveToStorage } from '../utils/storage';
 import { createMockScheme, createEmptyScheme } from '../utils/mockData';
-import { generateId } from '../utils/geometry';
 import {
-  calculateOverlapSAT,
-  getFragmentArea,
-  calculateEdgeFitScore,
+  generateId, generateReferenceLineId, generateSnapshotId, calculateEdgeSnap,
+  calculateSchemesDiff, verifyAlignment, getFragmentEdges
+} from '../utils/geometry';
+import {
+  calculateOverlapSAT, getFragmentArea, calculateEdgeFitScore,
 } from '../utils/geometry';
 import type { EdgeType } from '../types';
+import { validateFragmentUpdates, validateAllFragments, validateExportReadiness } from '../utils/validators';
 
 const EDGES: EdgeType[] = ['top', 'right', 'bottom', 'left'];
 
@@ -44,14 +49,44 @@ interface AppActions {
   recalculateEdgeFits: () => void;
   setConflictThreshold: (threshold: number) => void;
 
-  pushHistory: () => void;
+  pushHistory: (description?: string, action?: UndoRedoAction) => void;
   undo: () => void;
   redo: () => void;
+
+  setSnapEnabled: (enabled: boolean) => void;
+  setSnapThreshold: (threshold: number) => void;
+  setActiveSnapLines: (lines: SnapLine[]) => void;
+  clearSnapLines: () => void;
+  calculateSnap: (fragmentId: string, targetX: number, targetY: number) => { x: number; y: number; snapped: boolean };
+
+  setRulerVisible: (visible: boolean) => void;
+  setRulerUnit: (unit: RulerState['unit']) => void;
+  setRulerOrigin: (origin: Point) => void;
+
+  addReferenceLine: (type: 'vertical' | 'horizontal', position: number) => void;
+  updateReferenceLine: (id: string, updates: Partial<ReferenceLine>) => void;
+  removeReferenceLine: (id: string) => void;
+  clearReferenceLines: () => void;
+
+  setMagnifierEnabled: (enabled: boolean) => void;
+  setMagnifierPosition: (position: Point | null) => void;
+  setMagnifierZoom: (zoom: number) => void;
+
+  createSnapshot: (name: string, description?: string) => string;
+  restoreSnapshot: (snapshotId: string) => void;
+  deleteSnapshot: (snapshotId: string) => void;
+  getSnapshots: () => SchemeSnapshot[];
+
+  compareWithSnapshot: (snapshotId: string) => DiffResult | null;
+  compareSchemes: (schemeAId: string, schemeBId: string) => DiffResult | null;
+
+  verifyCurrentAlignment: () => AlignmentVerification | null;
+  validateAndFixAllFragments: () => void;
 
   persist: () => void;
 }
 
-const HISTORY_LIMIT = 50;
+const HISTORY_LIMIT = 100;
 
 function computeConflicts(
   scheme: Scheme | null,
@@ -118,6 +153,10 @@ function computeEdgeFits(scheme: Scheme | null): EdgeFitScore[] {
   return results.sort((a, b) => b.score - a.score || a.gapPixels - b.gapPixels);
 }
 
+function deepClone<T>(obj: T): T {
+  return JSON.parse(JSON.stringify(obj));
+}
+
 export const useAppStore = create<AppState & AppActions>((set, get) => ({
   schemes: {},
   activeSchemeId: null,
@@ -128,6 +167,23 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
   historyIndex: -1,
   toasts: [],
   conflictThreshold: 0.3,
+  snapEnabled: true,
+  snapThreshold: 8,
+  activeSnapLines: [],
+  ruler: {
+    visible: true,
+    unit: 'px',
+    origin: { x: 0, y: 0 },
+  },
+  referenceLines: [],
+  magnifier: {
+    enabled: false,
+    position: null,
+    zoom: 3,
+    size: 200,
+  },
+  snapshots: {},
+  lastAction: null,
 
   init: () => {
     const stored = loadFromStorage();
@@ -148,7 +204,37 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     setTimeout(() => {
       get().recalculateConflicts();
       get().recalculateEdgeFits();
+      get().validateAndFixAllFragments();
     }, 0);
+  },
+
+  validateAndFixAllFragments: () => {
+    const s = get();
+    const scheme = s.activeSchemeId ? s.schemes[s.activeSchemeId] : null;
+    if (!scheme) return;
+
+    const fragments = Object.values(scheme.fragmentMap);
+    const result = validateAllFragments(fragments);
+
+    if (!result.valid) {
+      result.issues.forEach(msg => s.addToast('warning', msg));
+
+      const newFragmentMap: Record<string, Fragment> = {};
+      result.fixedFragments.forEach(f => {
+        newFragmentMap[f.id] = f;
+      });
+
+      const updatedScheme = {
+        ...scheme,
+        fragmentMap: newFragmentMap,
+        updatedAt: Date.now(),
+      };
+
+      set({
+        schemes: { ...s.schemes, [scheme.id]: updatedScheme },
+      });
+      s.persist();
+    }
   },
 
   addToast: (type, message) => {
@@ -170,6 +256,8 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
       selectedFragmentId: null,
       history: [],
       historyIndex: -1,
+      referenceLines: [],
+      activeSnapLines: [],
     }));
     get().persist();
     get().addToast('success', `已创建方案：${scheme.name}`);
@@ -183,9 +271,11 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
       selectedFragmentId: null,
       history: [],
       historyIndex: -1,
+      activeSnapLines: [],
     });
     get().recalculateConflicts();
     get().recalculateEdgeFits();
+    get().validateAndFixAllFragments();
     get().addToast('info', '已切换方案');
   },
 
@@ -205,12 +295,17 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     const s = get();
     const schemes = { ...s.schemes };
     delete schemes[schemeId];
+
+    const snapshots = { ...s.snapshots };
+    delete snapshots[schemeId];
+
     const remainingIds = Object.keys(schemes);
     const nextActive = s.activeSchemeId === schemeId
       ? remainingIds[0] || null
       : s.activeSchemeId;
     set({
       schemes,
+      snapshots,
       activeSchemeId: nextActive,
       selectedFragmentId: null,
     });
@@ -239,7 +334,7 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     while (usedNos.has(nextNo)) nextNo++;
     const maxZ = Object.values(scheme.fragmentMap).reduce((m, f) => Math.max(m, f.zIndex), 0);
 
-    get().pushHistory();
+    s.pushHistory('导入碎片', 'import');
 
     const frag: Fragment = {
       id: generateId(),
@@ -269,10 +364,10 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
       schemes: { ...s.schemes, [scheme.id]: updatedScheme },
       selectedFragmentId: frag.id,
     });
-    get().recalculateConflicts();
-    get().recalculateEdgeFits();
-    get().persist();
-    get().addToast('success', `碎片 #${nextNo} 已导入`);
+    s.recalculateConflicts();
+    s.recalculateEdgeFits();
+    s.persist();
+    s.addToast('success', `碎片 #${nextNo} 已导入`);
   },
 
   removeFragment: (fragmentId) => {
@@ -282,10 +377,10 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     const frag = scheme.fragmentMap[fragmentId];
     if (!frag) return;
     if (frag.locked) {
-      get().addToast('warning', '锁定的碎片无法删除');
+      s.addToast('warning', '锁定的碎片无法删除');
       return;
     }
-    get().pushHistory();
+    s.pushHistory('删除碎片', 'remove');
     const fragmentMap = { ...scheme.fragmentMap };
     delete fragmentMap[fragmentId];
     const updatedScheme = {
@@ -298,10 +393,10 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
       schemes: { ...s.schemes, [scheme.id]: updatedScheme },
       selectedFragmentId: s.selectedFragmentId === fragmentId ? null : s.selectedFragmentId,
     });
-    get().recalculateConflicts();
-    get().recalculateEdgeFits();
-    get().persist();
-    get().addToast('info', `碎片 #${frag.fragmentNo} 已删除`);
+    s.recalculateConflicts();
+    s.recalculateEdgeFits();
+    s.persist();
+    s.addToast('info', `碎片 #${frag.fragmentNo} 已删除`);
   },
 
   updateFragment: (fragmentId, updates) => {
@@ -310,15 +405,23 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     if (!scheme) return;
     const frag = scheme.fragmentMap[fragmentId];
     if (!frag) return;
-    if (frag.locked && (
-      updates.x !== undefined ||
-      updates.y !== undefined ||
-      updates.rotation !== undefined ||
-      updates.opacity !== undefined
-    )) {
-      return;
+
+    if (frag.locked) {
+      const allowedFields: (keyof Fragment)[] = ['locked', 'aligned'];
+      const hasDisallowedUpdate = Object.keys(updates).some(key => !allowedFields.includes(key as keyof Fragment));
+      if (hasDisallowedUpdate) {
+        return;
+      }
     }
-    const updated = { ...frag, ...updates };
+
+    const allFragments = Object.values(scheme.fragmentMap);
+    const validation = validateFragmentUpdates(fragmentId, updates, allFragments);
+
+    if (!validation.valid && validation.message) {
+      s.addToast('warning', validation.message);
+    }
+
+    const updated = { ...frag, ...validation.clamped };
     const updatedScheme = {
       ...scheme,
       fragmentMap: { ...scheme.fragmentMap, [fragmentId]: updated },
@@ -335,8 +438,17 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     if (!scheme) return;
     const frag = scheme.fragmentMap[fragmentId];
     if (!frag) return;
-    if (frag.locked) return;
-    const updated = { ...frag, crop };
+    if (frag.locked) {
+      s.addToast('warning', '锁定的碎片无法修改裁边');
+      return;
+    }
+
+    const validation = validateFragmentUpdates(fragmentId, { crop }, Object.values(scheme.fragmentMap));
+    if (!validation.valid && validation.message) {
+      s.addToast('warning', validation.message);
+    }
+
+    const updated = { ...frag, ...validation.clamped };
     const updatedScheme = {
       ...scheme,
       fragmentMap: { ...scheme.fragmentMap, [fragmentId]: updated },
@@ -351,7 +463,7 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     const s = get();
     const scheme = s.schemes[s.activeSchemeId!];
     if (!scheme) return;
-    get().pushHistory();
+    s.pushHistory('调整层次顺序', 'reorder');
     const newMap: Record<string, Fragment> = {};
     orderedIds.forEach((id, idx) => {
       const f = scheme.fragmentMap[id];
@@ -368,7 +480,7 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     set({
       schemes: { ...s.schemes, [scheme.id]: updatedScheme },
     });
-    get().persist();
+    s.persist();
   },
 
   moveFragmentZIndex: (fragmentId, direction) => {
@@ -378,7 +490,7 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     const order = [...scheme.fragmentOrder];
     const idx = order.indexOf(fragmentId);
     if (idx === -1) return;
-    get().pushHistory();
+    s.pushHistory('调整层次', 'reorder');
     let newOrder = [...order];
     if (direction === 'up' && idx < order.length - 1) {
       [newOrder[idx], newOrder[idx + 1]] = [newOrder[idx + 1], newOrder[idx]];
@@ -389,7 +501,7 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     } else if (direction === 'bottom') {
       newOrder = [fragmentId, ...order.filter((id) => id !== fragmentId)];
     }
-    get().reorderFragments(newOrder);
+    s.reorderFragments(newOrder);
   },
 
   toggleLock: (fragmentId) => {
@@ -398,6 +510,7 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     if (!scheme) return;
     const frag = scheme.fragmentMap[fragmentId];
     if (!frag) return;
+    s.pushHistory(frag.locked ? '解锁碎片' : '锁定碎片', 'lock');
     const updated = { ...frag, locked: !frag.locked };
     const updatedScheme = {
       ...scheme,
@@ -407,8 +520,8 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     set({
       schemes: { ...s.schemes, [scheme.id]: updatedScheme },
     });
-    get().persist();
-    get().addToast(updated.locked ? 'success' : 'info',
+    s.persist();
+    s.addToast(updated.locked ? 'success' : 'info',
       `碎片 #${frag.fragmentNo} 已${updated.locked ? '锁定' : '解锁'}`);
   },
 
@@ -429,6 +542,7 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
       }
     }
 
+    s.pushHistory(frag.aligned ? '取消对位标记' : '标记已对位', 'align');
     const updated = { ...frag, aligned: !frag.aligned };
     const updatedScheme = {
       ...scheme,
@@ -438,11 +552,11 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     set({
       schemes: { ...s.schemes, [scheme.id]: updatedScheme },
     });
-    get().persist();
+    s.persist();
     if (updated.aligned) {
-      get().addToast('success', `碎片 #${frag.fragmentNo} 标记为已对位`);
+      s.addToast('success', `碎片 #${frag.fragmentNo} 标记为已对位`);
     } else {
-      get().addToast('info', `碎片 #${frag.fragmentNo} 已取消对位标记`);
+      s.addToast('info', `碎片 #${frag.fragmentNo} 已取消对位标记`);
     }
   },
 
@@ -482,6 +596,7 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
         set({
           schemes: { ...s.schemes, [scheme.id]: updatedScheme },
         });
+        s.addToast('warning', '存在重叠冲突的碎片已自动取消对位标记');
       }
     }
 
@@ -499,14 +614,16 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     get().recalculateConflicts();
   },
 
-  pushHistory: () => {
+  pushHistory: (description = '操作', action: UndoRedoAction = 'batch') => {
     const s = get();
     const scheme = s.activeSchemeId ? s.schemes[s.activeSchemeId] : null;
     if (!scheme) return;
     const entry: HistoryEntry = {
       schemeId: scheme.id,
-      fragmentMap: JSON.parse(JSON.stringify(scheme.fragmentMap)),
+      fragmentMap: deepClone(scheme.fragmentMap),
       fragmentOrder: [...scheme.fragmentOrder],
+      timestamp: Date.now(),
+      description,
     };
     const newHistory = s.history.slice(0, s.historyIndex + 1);
     newHistory.push(entry);
@@ -516,13 +633,14 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     set({
       history: newHistory,
       historyIndex: newHistory.length - 1,
+      lastAction: action,
     });
   },
 
   undo: () => {
     const s = get();
     if (s.historyIndex <= 0) {
-      get().addToast('warning', '没有可撤销的操作');
+      s.addToast('warning', '没有可撤销的操作');
       return;
     }
     const newIndex = s.historyIndex - 1;
@@ -531,7 +649,7 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     if (!scheme) return;
     const updatedScheme = {
       ...scheme,
-      fragmentMap: JSON.parse(JSON.stringify(entry.fragmentMap)),
+      fragmentMap: deepClone(entry.fragmentMap),
       fragmentOrder: [...entry.fragmentOrder],
       updatedAt: Date.now(),
     };
@@ -539,16 +657,16 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
       schemes: { ...s.schemes, [scheme.id]: updatedScheme },
       historyIndex: newIndex,
     });
-    get().recalculateConflicts();
-    get().recalculateEdgeFits();
-    get().persist();
-    get().addToast('info', '已撤销操作');
+    s.recalculateConflicts();
+    s.recalculateEdgeFits();
+    s.persist();
+    s.addToast('info', `已撤销: ${entry.description}`);
   },
 
   redo: () => {
     const s = get();
     if (s.historyIndex >= s.history.length - 1) {
-      get().addToast('warning', '没有可重做的操作');
+      s.addToast('warning', '没有可重做的操作');
       return;
     }
     const newIndex = s.historyIndex + 1;
@@ -557,7 +675,7 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     if (!scheme) return;
     const updatedScheme = {
       ...scheme,
-      fragmentMap: JSON.parse(JSON.stringify(entry.fragmentMap)),
+      fragmentMap: deepClone(entry.fragmentMap),
       fragmentOrder: [...entry.fragmentOrder],
       updatedAt: Date.now(),
     };
@@ -565,10 +683,234 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
       schemes: { ...s.schemes, [scheme.id]: updatedScheme },
       historyIndex: newIndex,
     });
-    get().recalculateConflicts();
-    get().recalculateEdgeFits();
-    get().persist();
-    get().addToast('info', '已重做操作');
+    s.recalculateConflicts();
+    s.recalculateEdgeFits();
+    s.persist();
+    s.addToast('info', `已重做: ${entry.description}`);
+  },
+
+  setSnapEnabled: (enabled) => {
+    set({ snapEnabled: enabled });
+    get().addToast('info', `边缘吸附已${enabled ? '开启' : '关闭'}`);
+  },
+
+  setSnapThreshold: (threshold) => {
+    set({ snapThreshold: Math.max(1, Math.min(50, threshold)) });
+  },
+
+  setActiveSnapLines: (lines) => {
+    set({ activeSnapLines: lines });
+  },
+
+  clearSnapLines: () => {
+    set({ activeSnapLines: [] });
+  },
+
+  calculateSnap: (fragmentId, targetX, targetY) => {
+    const s = get();
+    if (!s.snapEnabled) {
+      return { x: targetX, y: targetY, snapped: false };
+    }
+
+    const scheme = s.activeSchemeId ? s.schemes[s.activeSchemeId] : null;
+    if (!scheme) return { x: targetX, y: targetY, snapped: false };
+
+    const dragging = scheme.fragmentMap[fragmentId];
+    if (!dragging) return { x: targetX, y: targetY, snapped: false };
+
+    const otherFragments = Object.values(scheme.fragmentMap).filter(f => f.id !== fragmentId);
+    const result = calculateEdgeSnap(dragging, targetX, targetY, otherFragments, s.snapThreshold);
+
+    if (result.snapped) {
+      s.setActiveSnapLines(result.lines);
+    } else {
+      s.clearSnapLines();
+    }
+
+    return { x: result.x, y: result.y, snapped: result.snapped };
+  },
+
+  setRulerVisible: (visible) => {
+    set((s) => ({ ruler: { ...s.ruler, visible } }));
+  },
+
+  setRulerUnit: (unit) => {
+    set((s) => ({ ruler: { ...s.ruler, unit } }));
+  },
+
+  setRulerOrigin: (origin) => {
+    set((s) => ({ ruler: { ...s.ruler, origin } }));
+  },
+
+  addReferenceLine: (type, position) => {
+    const line: ReferenceLine = {
+      id: generateReferenceLineId(),
+      type,
+      position,
+      color: '#B8860B',
+      locked: false,
+    };
+    set((s) => ({ referenceLines: [...s.referenceLines, line] }));
+    get().addToast('success', '已添加参考线');
+  },
+
+  updateReferenceLine: (id, updates) => {
+    set((s) => ({
+      referenceLines: s.referenceLines.map(line =>
+        line.id === id ? { ...line, ...updates } : line
+      ),
+    }));
+  },
+
+  removeReferenceLine: (id) => {
+    set((s) => ({
+      referenceLines: s.referenceLines.filter(line => line.id !== id),
+    }));
+  },
+
+  clearReferenceLines: () => {
+    set({ referenceLines: [] });
+    get().addToast('info', '已清除所有参考线');
+  },
+
+  setMagnifierEnabled: (enabled) => {
+    set((s) => ({
+      magnifier: { ...s.magnifier, enabled, position: enabled ? s.magnifier.position : null },
+    }));
+    get().addToast('info', `放大镜已${enabled ? '开启' : '关闭'}`);
+  },
+
+  setMagnifierPosition: (position) => {
+    set((s) => ({ magnifier: { ...s.magnifier, position } }));
+  },
+
+  setMagnifierZoom: (zoom) => {
+    set((s) => ({ magnifier: { ...s.magnifier, zoom: Math.max(1.5, Math.min(8, zoom)) } }));
+  },
+
+  createSnapshot: (name, description = '') => {
+    const s = get();
+    const schemeId = s.activeSchemeId;
+    if (!schemeId) {
+      s.addToast('error', '没有活动方案');
+      return '';
+    }
+    const scheme = s.schemes[schemeId];
+    if (!scheme) return '';
+
+    const snapshot: SchemeSnapshot = {
+      id: generateSnapshotId(),
+      schemeId,
+      name,
+      description,
+      createdAt: Date.now(),
+      fragmentMap: deepClone(scheme.fragmentMap),
+      fragmentOrder: [...scheme.fragmentOrder],
+    };
+
+    const schemeSnapshots = s.snapshots[schemeId] || [];
+    set({
+      snapshots: {
+        ...s.snapshots,
+        [schemeId]: [...schemeSnapshots, snapshot],
+      },
+    });
+    s.persist();
+    s.addToast('success', `已创建快照: ${name}`);
+    return snapshot.id;
+  },
+
+  restoreSnapshot: (snapshotId) => {
+    const s = get();
+    const schemeId = s.activeSchemeId;
+    if (!schemeId) return;
+
+    const schemeSnapshots = s.snapshots[schemeId] || [];
+    const snapshot = schemeSnapshots.find(snap => snap.id === snapshotId);
+    if (!snapshot) {
+      s.addToast('error', '快照不存在');
+      return;
+    }
+
+    s.pushHistory(`恢复快照: ${snapshot.name}`, 'batch');
+
+    const scheme = s.schemes[schemeId];
+    if (!scheme) return;
+
+    const updatedScheme = {
+      ...scheme,
+      fragmentMap: deepClone(snapshot.fragmentMap),
+      fragmentOrder: [...snapshot.fragmentOrder],
+      updatedAt: Date.now(),
+    };
+
+    set({
+      schemes: { ...s.schemes, [schemeId]: updatedScheme },
+    });
+    s.recalculateConflicts();
+    s.recalculateEdgeFits();
+    s.persist();
+    s.addToast('success', `已恢复快照: ${snapshot.name}`);
+  },
+
+  deleteSnapshot: (snapshotId) => {
+    const s = get();
+    const schemeId = s.activeSchemeId;
+    if (!schemeId) return;
+
+    const schemeSnapshots = s.snapshots[schemeId] || [];
+    const snapshot = schemeSnapshots.find(snap => snap.id === snapshotId);
+
+    set({
+      snapshots: {
+        ...s.snapshots,
+        [schemeId]: schemeSnapshots.filter(snap => snap.id !== snapshotId),
+      },
+    });
+    s.persist();
+    if (snapshot) {
+      s.addToast('info', `已删除快照: ${snapshot.name}`);
+    }
+  },
+
+  getSnapshots: () => {
+    const s = get();
+    const schemeId = s.activeSchemeId;
+    if (!schemeId) return [];
+    return s.snapshots[schemeId] || [];
+  },
+
+  compareWithSnapshot: (snapshotId) => {
+    const s = get();
+    const schemeId = s.activeSchemeId;
+    if (!schemeId) return null;
+
+    const scheme = s.schemes[schemeId];
+    if (!scheme) return null;
+
+    const schemeSnapshots = s.snapshots[schemeId] || [];
+    const snapshot = schemeSnapshots.find(snap => snap.id === snapshotId);
+    if (!snapshot) return null;
+
+    return calculateSchemesDiff(snapshot.fragmentMap, scheme.fragmentMap);
+  },
+
+  compareSchemes: (schemeAId, schemeBId) => {
+    const s = get();
+    const schemeA = s.schemes[schemeAId];
+    const schemeB = s.schemes[schemeBId];
+    if (!schemeA || !schemeB) return null;
+
+    return calculateSchemesDiff(schemeA.fragmentMap, schemeB.fragmentMap);
+  },
+
+  verifyCurrentAlignment: () => {
+    const s = get();
+    const scheme = s.activeSchemeId ? s.schemes[s.activeSchemeId] : null;
+    if (!scheme) return null;
+
+    const fragments = Object.values(scheme.fragmentMap);
+    return verifyAlignment(fragments, s.conflicts);
   },
 
   persist: () => {
@@ -576,6 +918,7 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     saveToStorage({
       schemes: s.schemes,
       activeSchemeId: s.activeSchemeId,
+      snapshots: s.snapshots,
     });
   },
 }));

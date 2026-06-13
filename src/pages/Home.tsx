@@ -110,11 +110,50 @@ const SectionHeader = styled(Box)(({ theme }) => ({
 
 const Home: React.FC = () => {
   const init = useAppStore((s) => s.init);
+  const undo = useAppStore((s) => s.undo);
+  const redo = useAppStore((s) => s.redo);
+  const persist = useAppStore((s) => s.persist);
+  const selectedFragmentId = useAppStore((s) => s.selectedFragmentId);
+  const removeFragment = useAppStore((s) => s.removeFragment);
+  const toggleLock = useAppStore((s) => s.toggleLock);
+  const addToast = useAppStore((s) => s.addToast);
   const [rightExpanded, setRightExpanded] = useState<string[]>(['assembly', 'overlap', 'edgefit', 'pending']);
 
   useEffect(() => {
     init();
   }, [init]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+      const ctrlOrCmd = isMac ? e.metaKey : e.ctrlKey;
+
+      if (ctrlOrCmd && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      } else if ((ctrlOrCmd && e.key === 'y') || (ctrlOrCmd && e.shiftKey && e.key === 'z')) {
+        e.preventDefault();
+        redo();
+      } else if (ctrlOrCmd && e.key === 's') {
+        e.preventDefault();
+        persist();
+        addToast('success', '方案已保存');
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedFragmentId) {
+        const activeElement = document.activeElement;
+        const isInput = activeElement?.tagName === 'INPUT' || activeElement?.tagName === 'TEXTAREA';
+        if (!isInput) {
+          e.preventDefault();
+          removeFragment(selectedFragmentId);
+        }
+      } else if (ctrlOrCmd && e.key === 'l' && selectedFragmentId) {
+        e.preventDefault();
+        toggleLock(selectedFragmentId);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [undo, redo, persist, removeFragment, toggleLock, selectedFragmentId, addToast]);
 
   const handleAccordionChange = (panel: string) => (
     _event: React.SyntheticEvent,

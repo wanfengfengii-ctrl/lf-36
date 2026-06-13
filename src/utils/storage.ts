@@ -1,10 +1,11 @@
-import type { Scheme } from '../types';
+import type { Scheme, SchemeSnapshot } from '../types';
 
 const STORAGE_KEY = 'ancient_map_workbench';
 
 export interface StorageData {
   schemes: Record<string, Scheme>;
   activeSchemeId: string | null;
+  snapshots?: Record<string, SchemeSnapshot[]>;
 }
 
 export function loadFromStorage(): StorageData | null {
@@ -30,6 +31,8 @@ export function clearStorage(): void {
 }
 
 export function exportSchemeToJSON(scheme: Scheme): string {
+  const allFragments = Object.values(scheme.fragmentMap);
+  const alignedFragments = allFragments.filter(f => f.aligned);
   const exportData = {
     version: '1.0',
     exportedAt: new Date().toISOString(),
@@ -38,11 +41,13 @@ export function exportSchemeToJSON(scheme: Scheme): string {
       name: scheme.name,
       createdAt: scheme.createdAt,
       updatedAt: scheme.updatedAt,
-      fragments: Object.values(scheme.fragmentMap).map((f) => ({
+      totalFragments: allFragments.length,
+      exportedFragments: alignedFragments.length,
+      fragments: alignedFragments.map((f) => ({
         ...f,
         imageSrc: f.imageSrc,
       })),
-      fragmentOrder: scheme.fragmentOrder,
+      fragmentOrder: scheme.fragmentOrder.filter(id => scheme.fragmentMap[id]?.aligned),
     },
   };
   return JSON.stringify(exportData, null, 2);
