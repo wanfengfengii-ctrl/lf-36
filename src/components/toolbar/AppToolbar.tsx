@@ -63,11 +63,16 @@ const ToolbarDivider = styled(Divider)(({ theme }) => ({
 }));
 
 const AppToolbar: React.FC = () => {
-  const { undo, redo, history, historyIndex, toasts, addToast, persist, schemes, activeSchemeId } = useAppStore();
+  const { undo, redo, history, historyIndex, toasts, addToast, persist, schemes, activeSchemeId, conflicts } = useAppStore();
   const { importFiles } = useFragmentOps();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
-  const [exportResult, setExportResult] = useState<{ ready: boolean; message?: string; unalignedCount?: number } | null>(null);
+  const [exportResult, setExportResult] = useState<{
+    ready: boolean;
+    message?: string;
+    unalignedCount?: number;
+    conflictCount?: number;
+  } | null>(null);
 
   const scheme = activeSchemeId ? schemes[activeSchemeId] : null;
   const canUndo = historyIndex > 0;
@@ -91,17 +96,29 @@ const AppToolbar: React.FC = () => {
 
   const handleExportClick = () => {
     if (!scheme) return;
-    const result = validateExportReadiness(scheme);
+    const result = validateExportReadiness(scheme, conflicts);
     setExportResult({
       ready: result.ready,
       message: result.message,
       unalignedCount: result.unalignedFragments.length,
+      conflictCount: result.conflictFragments.length,
     });
     setExportDialogOpen(true);
   };
 
   const handleExportConfirm = () => {
     if (!scheme) return;
+    const result = validateExportReadiness(scheme, conflicts);
+    if (!result.ready) {
+      addToast('error', result.message || '导出校验失败');
+      setExportResult({
+        ready: result.ready,
+        message: result.message,
+        unalignedCount: result.unalignedFragments.length,
+        conflictCount: result.conflictFragments.length,
+      });
+      return;
+    }
     const json = exportSchemeToJSON(scheme);
     const filename = `${scheme.name.replace(/\s+/g, '_')}_${Date.now()}.json`;
     downloadJSON(json, filename);
@@ -288,7 +305,7 @@ const AppToolbar: React.FC = () => {
                 </Typography>
               </Box>
               {!exportResult.ready && exportResult.unalignedCount && exportResult.unalignedCount > 0 && (
-                <Box>
+                <Box sx={{ mb: 2 }}>
                   <Typography variant="caption" color="text.disabled" sx={{ mb: 0.5, display: 'block' }}>
                     未完成对位的碎片：
                   </Typography>
@@ -317,6 +334,58 @@ const AppToolbar: React.FC = () => {
                           primary={
                             <Typography variant="caption" color="text.disabled">
                               ...还有 {exportResult.unalignedCount - 5} 个
+                            </Typography>
+                          }
+                        />
+                      </ListItem>
+                    )}
+                  </List>
+                </Box>
+              )}
+              {!exportResult.ready && exportResult.conflictCount && exportResult.conflictCount > 0 && (
+                <Box>
+                  <Typography variant="caption" color="text.disabled" sx={{ mb: 0.5, display: 'block' }}>
+                    存在重叠冲突的碎片：
+                  </Typography>
+                  <List dense disablePadding>
+                    {conflicts
+                      .filter((c) => c.isConflict)
+                      .slice(0, 5)
+                      .map((c, i) => {
+                        const fragA = scheme?.fragmentMap[c.fragmentAId];
+                        const fragB = scheme?.fragmentMap[c.fragmentBId];
+                        return (
+                          <ListItem key={`${c.fragmentAId}-${c.fragmentBId}-${i}`} dense disableGutters>
+                            <ListItemText
+                              primary={
+                                <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
+                                  <Chip
+                                    label={`#${fragA?.fragmentNo ?? '?'}`}
+                                    size="small"
+                                    color="error"
+                                    variant="outlined"
+                                    sx={{ height: 20, fontSize: 10 }}
+                                  />
+                                  <Typography variant="caption" color="text.disabled">↔</Typography>
+                                  <Chip
+                                    label={`#${fragB?.fragmentNo ?? '?'}`}
+                                    size="small"
+                                    color="error"
+                                    variant="outlined"
+                                    sx={{ height: 20, fontSize: 10 }}
+                                  />
+                                </Box>
+                              }
+                            />
+                          </ListItem>
+                        );
+                      })}
+                    {exportResult.conflictCount > 5 && (
+                      <ListItem dense disableGutters>
+                        <ListItemText
+                          primary={
+                            <Typography variant="caption" color="text.disabled">
+                              ...还有更多冲突
                             </Typography>
                           }
                         />

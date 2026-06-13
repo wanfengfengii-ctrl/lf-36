@@ -310,7 +310,12 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     if (!scheme) return;
     const frag = scheme.fragmentMap[fragmentId];
     if (!frag) return;
-    if (frag.locked && (updates.x !== undefined || updates.y !== undefined || updates.rotation !== undefined)) {
+    if (frag.locked && (
+      updates.x !== undefined ||
+      updates.y !== undefined ||
+      updates.rotation !== undefined ||
+      updates.opacity !== undefined
+    )) {
       return;
     }
     const updated = { ...frag, ...updates };
@@ -413,6 +418,17 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     if (!scheme) return;
     const frag = scheme.fragmentMap[fragmentId];
     if (!frag) return;
+
+    if (!frag.aligned) {
+      const hasConflict = s.conflicts.some(
+        (c) => c.isConflict && (c.fragmentAId === fragmentId || c.fragmentBId === fragmentId)
+      );
+      if (hasConflict) {
+        s.addToast('error', `碎片 #${frag.fragmentNo} 存在重叠冲突，无法标记为已对位`);
+        return;
+      }
+    }
+
     const updated = { ...frag, aligned: !frag.aligned };
     const updatedScheme = {
       ...scheme,
@@ -425,13 +441,50 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     get().persist();
     if (updated.aligned) {
       get().addToast('success', `碎片 #${frag.fragmentNo} 标记为已对位`);
+    } else {
+      get().addToast('info', `碎片 #${frag.fragmentNo} 已取消对位标记`);
     }
   },
 
   recalculateConflicts: () => {
     const s = get();
     const scheme = s.activeSchemeId ? s.schemes[s.activeSchemeId] : null;
+    if (!scheme) return;
     const conflicts = computeConflicts(scheme, s.conflictThreshold);
+
+    const conflictIds = new Set<string>();
+    conflicts.forEach((c) => {
+      if (c.isConflict) {
+        conflictIds.add(c.fragmentAId);
+        conflictIds.add(c.fragmentBId);
+      }
+    });
+
+    if (conflictIds.size > 0) {
+      let updatedMap = scheme.fragmentMap;
+      let hasChanges = false;
+      conflictIds.forEach((id) => {
+        const f = updatedMap[id];
+        if (f && f.aligned) {
+          updatedMap = {
+            ...updatedMap,
+            [id]: { ...f, aligned: false },
+          };
+          hasChanges = true;
+        }
+      });
+      if (hasChanges) {
+        const updatedScheme = {
+          ...scheme,
+          fragmentMap: updatedMap,
+          updatedAt: Date.now(),
+        };
+        set({
+          schemes: { ...s.schemes, [scheme.id]: updatedScheme },
+        });
+      }
+    }
+
     set({ conflicts });
   },
 

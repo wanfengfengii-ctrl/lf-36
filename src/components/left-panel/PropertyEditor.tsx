@@ -251,6 +251,7 @@ const PropertyEditor: React.FC = () => {
             max={1}
             step={0.01}
             onChange={(_, v) => handleOpacityChange(v as number)}
+            disabled={fragment.locked}
             valueLabelDisplay="auto"
             valueLabelFormat={(v) => `${Math.round(v * 100)}%`}
             sx={{ px: 0.5 }}
@@ -261,6 +262,7 @@ const PropertyEditor: React.FC = () => {
             type="number"
             value={Math.round(localOpacity * 100)}
             onChange={(e) => handleOpacityChange((parseInt(e.target.value) || 0) / 100)}
+            disabled={fragment.locked}
             slotProps={{
               input: {
                 endAdornment: <InputAdornment position="end">%</InputAdornment>,

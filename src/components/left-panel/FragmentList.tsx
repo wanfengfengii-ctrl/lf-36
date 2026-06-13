@@ -186,18 +186,27 @@ const FragmentList: React.FC = () => {
                       {fragment.locked ? <LockIcon fontSize="small" /> : <LockOpenIcon fontSize="small" />}
                     </IconButton>
                   </Tooltip>
-                  <Tooltip title={fragment.aligned ? '取消对位' : '标记已对位'}>
-                    <IconButton
-                      size="small"
-                      color={fragment.aligned ? 'success' : 'default'}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleAligned(fragment.id);
-                      }}
-                      sx={{ p: 0.5 }}
-                    >
-                      {fragment.aligned ? <CheckIcon fontSize="small" /> : <UnalignedIcon fontSize="small" />}
-                    </IconButton>
+                  <Tooltip title={
+                    conflictIds.has(fragment.id)
+                      ? '存在重叠冲突，需先解决冲突'
+                      : fragment.aligned
+                      ? '取消对位'
+                      : '标记已对位'
+                  }>
+                    <span>
+                      <IconButton
+                        size="small"
+                        color={fragment.aligned ? 'success' : 'default'}
+                        disabled={conflictIds.has(fragment.id)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleAligned(fragment.id);
+                        }}
+                        sx={{ p: 0.5 }}
+                      >
+                        {fragment.aligned ? <CheckIcon fontSize="small" /> : <UnalignedIcon fontSize="small" />}
+                      </IconButton>
+                    </span>
                   </Tooltip>
                   <Tooltip title="删除">
                     <IconButton

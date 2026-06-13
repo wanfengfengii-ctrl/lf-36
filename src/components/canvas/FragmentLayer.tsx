@@ -90,9 +90,7 @@ const FragmentLayer: React.FC<FragmentLayerProps> = ({ fragment, isSelected, onS
   };
 
   const handleDblClick = () => {
-    if (!fragment.locked) {
-      toggleLock(fragment.id);
-    }
+    toggleLock(fragment.id);
   };
 
   const strokeColor = isInConflict
@@ -108,7 +106,11 @@ const FragmentLayer: React.FC<FragmentLayerProps> = ({ fragment, isSelected, onS
   const strokeWidth = isInConflict ? 4 : isSelected ? 3 : 1.5;
 
   return (
-    <Group ref={groupRef}>
+    <Group
+      ref={groupRef}
+      onDblClick={handleDblClick}
+      onDblTap={handleDblClick}
+    >
       <Rect
         ref={shapeRef}
         x={fragment.x - croppedW / 2}
@@ -133,8 +135,6 @@ const FragmentLayer: React.FC<FragmentLayerProps> = ({ fragment, isSelected, onS
         onTouchStart={handleTouchStart}
         onDragEnd={handleDragEnd}
         onTransformEnd={handleTransformEnd}
-        onDblClick={handleDblClick}
-        onDblTap={handleDblClick}
       />
       <Group
         x={fragment.x}

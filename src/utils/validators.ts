@@ -1,4 +1,4 @@
-import type { Fragment, CropEdges, Scheme } from '../types';
+import type { Fragment, CropEdges, Scheme, OverlapInfo } from '../types';
 
 export function validateFragmentNo(
   fragmentNo: number,
@@ -50,28 +50,48 @@ export function validateCrop(
   return { valid: true, clamped };
 }
 
-export function validateExportReadiness(scheme: Scheme): {
+export function validateExportReadiness(
+  scheme: Scheme,
+  conflicts: OverlapInfo[] = []
+): {
   ready: boolean;
   unalignedFragments: Fragment[];
+  conflictFragments: Fragment[];
   message?: string;
 } {
   const fragments = Object.values(scheme.fragmentMap);
-  const unaligned = fragments.filter((f) => !f.aligned);
-  if (unaligned.length > 0) {
-    return {
-      ready: false,
-      unalignedFragments: unaligned,
-      message: `${unaligned.length} 个碎片未完成对位，无法导出`,
-    };
-  }
   if (fragments.length === 0) {
     return {
       ready: false,
       unalignedFragments: [],
+      conflictFragments: [],
       message: '方案中没有碎片，无法导出',
     };
   }
-  return { ready: true, unalignedFragments: [] };
+
+  const unaligned = fragments.filter((f) => !f.aligned);
+  const conflictingIds = new Set<string>();
+  conflicts.forEach((c) => {
+    if (c.isConflict) {
+      conflictingIds.add(c.fragmentAId);
+      conflictingIds.add(c.fragmentBId);
+    }
+  });
+  const conflictFragments = fragments.filter((f) => conflictingIds.has(f.id));
+
+  const issues: string[] = [];
+  if (unaligned.length > 0) issues.push(`${unaligned.length} 个碎片未完成对位`);
+  if (conflictFragments.length > 0) issues.push(`${conflictFragments.length} 个碎片存在重叠冲突`);
+
+  if (issues.length > 0) {
+    return {
+      ready: false,
+      unalignedFragments: unaligned,
+      conflictFragments,
+      message: `${issues.join('，')}，无法导出`,
+    };
+  }
+  return { ready: true, unalignedFragments: [], conflictFragments: [] };
 }
 
 export function getNextAvailableFragmentNo(fragments: Fragment[]): number {
