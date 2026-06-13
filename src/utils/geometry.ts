@@ -198,6 +198,14 @@ export function generateSnapshotId(): string {
   return 'snap_' + Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
 }
 
+export function generateAnnotationId(): string {
+  return 'anno_' + Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
+}
+
+export function generateReviewVersionId(): string {
+  return 'rver_' + Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
+}
+
 export interface FragmentEdges {
   left: number;
   right: number;
@@ -408,7 +416,7 @@ export function calculateSchemesDiff(
     }
   }
 
-  return { added, removed, modified, unchanged };
+  return { added, removed, modified, unchanged, annotationDiff: [] };
 }
 
 export function verifyAlignment(

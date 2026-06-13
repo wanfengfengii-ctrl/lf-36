@@ -47,12 +47,16 @@ import {
   VerticalAlignCenter as VerticalLineIcon,
   Clear as ClearIcon,
   Settings as SettingsIcon,
+  Comment as CommentIcon,
+  RateReview as ReviewIcon,
+  Description as ReportIcon,
 } from '@mui/icons-material';
 import SchemeSelector from './SchemeSelector';
 import { useAppStore } from '../../store/useAppStore';
 import { useFragmentOps } from '../../hooks/useFragmentOps';
 import { exportSchemeToJSON, downloadJSON } from '../../utils/storage';
 import { validateExportReadiness } from '../../utils/validators';
+import ReviewCenterDialog from '../common/ReviewCenterDialog';
 import type { DiffResult, AlignmentVerification } from '../../types';
 
 const StyledAppBar = styled(AppBar)(({ theme }) => ({
@@ -83,7 +87,11 @@ const ToolbarDivider = styled(Divider)(({ theme }) => ({
   mx: theme.spacing(0.5),
 }));
 
-const AppToolbar: React.FC = () => {
+interface AppToolbarProps {
+  onOpenReviewCenter?: () => void;
+}
+
+const AppToolbar: React.FC<AppToolbarProps> = ({ onOpenReviewCenter }) => {
   const {
     undo, redo, toasts, addToast, persist, schemes, activeSchemeId, conflicts,
     snapEnabled, setSnapEnabled, snapThreshold, setSnapThreshold,
@@ -403,6 +411,36 @@ const AppToolbar: React.FC = () => {
               <ListItemText primary="偏好设置" />
             </MenuItem>
           </Menu>
+
+          <Tooltip title="考据批注与版本审阅中心 (Ctrl+Shift+R)">
+            <IconButton
+              size="small"
+              onClick={onOpenReviewCenter}
+              sx={{
+                color: '#F5F0E1',
+                '&:hover': { background: 'rgba(255,255,255,0.1)' },
+              }}
+            >
+              <ReviewIcon sx={{ fontSize: 20 }} />
+            </IconButton>
+          </Tooltip>
+
+          <Tooltip title="批注模式 (Ctrl+M)">
+            <IconButton
+              size="small"
+              onClick={() => {
+                const { annotationMode, setAnnotationMode, addToast } = useAppStore.getState();
+                setAnnotationMode(!annotationMode);
+                addToast('info', `批注模式已${annotationMode ? '关闭' : '开启'}`);
+              }}
+              sx={{
+                color: '#F5F0E1',
+                '&:hover': { background: 'rgba(255,255,255,0.1)' },
+              }}
+            >
+              <CommentIcon sx={{ fontSize: 20 }} />
+            </IconButton>
+          </Tooltip>
 
           <ToolbarDivider orientation="vertical" flexItem />
 

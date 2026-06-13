@@ -4,7 +4,13 @@ import type Konva from 'konva';
 import { useAppStore } from '../../store/useAppStore';
 import { useFragmentOps } from '../../hooks/useFragmentOps';
 import FragmentLayer from './FragmentLayer';
+import AnnotationLayer from './AnnotationLayer';
 import { getCroppedDimensions } from '../../utils/geometry';
+import type { AnnotationBounds } from '../../types';
+
+interface MapCanvasProps {
+  onAreaSelected?: (bounds: AnnotationBounds) => void;
+}
 
 const GRID_SIZE = 40;
 const RULER_SIZE = 24;
@@ -31,7 +37,7 @@ function useImage(src: string): [HTMLImageElement | null, boolean] {
   return [image, loaded];
 }
 
-const MapCanvas: React.FC = () => {
+const MapCanvas: React.FC<MapCanvasProps> = ({ onAreaSelected }) => {
   const stageRef = useRef<Konva.Stage>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 800, height: 600 });
@@ -39,11 +45,13 @@ const MapCanvas: React.FC = () => {
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null);
   const [imageCache, setImageCache] = useState<Record<string, HTMLImageElement | null>>({});
+  const [annotationDrawStart, setAnnotationDrawStart] = useState<{ x: number; y: number } | null>(null);
+  const [annotationDrawCurrent, setAnnotationDrawCurrent] = useState<{ x: number; y: number } | null>(null);
 
   const {
     activeSchemeId, schemes, selectedFragmentId, conflicts,
     activeSnapLines, referenceLines, ruler, magnifier,
-    clearSnapLines, setMagnifierPosition,
+    clearSnapLines, setMagnifierPosition, annotationMode,
   } = useAppStore();
   const scheme = activeSchemeId ? schemes[activeSchemeId] : null;
   const { selectAndFocus } = useFragmentOps();
@@ -91,10 +99,62 @@ const MapCanvas: React.FC = () => {
   }, []);
 
   const handleStageClick = (e: Konva.KonvaEventObject<MouseEvent>) => {
+    if (annotationMode) return;
     if (e.target === e.target.getStage()) {
       selectFragment(null);
     }
   };
+
+  const handleAnnotationMouseDown = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
+    if (!annotationMode || !stageRef.current) return;
+    const pos = stageRef.current.getPointerPosition();
+    if (!pos) return;
+    const rulerOff = ruler.visible ? RULER_SIZE : 0;
+    const canvasX = (pos.x - offset.x - rulerOff) / scale;
+    const canvasY = (pos.y - offset.y - rulerOff) / scale;
+    setAnnotationDrawStart({ x: canvasX, y: canvasY });
+    setAnnotationDrawCurrent({ x: canvasX, y: canvasY });
+  }, [annotationMode, offset, scale, ruler.visible]);
+
+  const handleAnnotationMouseMove = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
+    if (!annotationDrawStart || !stageRef.current) return;
+    const pos = stageRef.current.getPointerPosition();
+    if (!pos) return;
+    const rulerOff = ruler.visible ? RULER_SIZE : 0;
+    const canvasX = (pos.x - offset.x - rulerOff) / scale;
+    const canvasY = (pos.y - offset.y - rulerOff) / scale;
+    setAnnotationDrawCurrent({ x: canvasX, y: canvasY });
+  }, [annotationDrawStart, offset, scale, ruler.visible]);
+
+  const handleAnnotationMouseUp = useCallback(() => {
+    if (!annotationDrawStart || !annotationDrawCurrent) {
+      setAnnotationDrawStart(null);
+      setAnnotationDrawCurrent(null);
+      return;
+    }
+    const x1 = Math.min(annotationDrawStart.x, annotationDrawCurrent.x);
+    const y1 = Math.min(annotationDrawStart.y, annotationDrawCurrent.y);
+    const x2 = Math.max(annotationDrawStart.x, annotationDrawCurrent.x);
+    const y2 = Math.max(annotationDrawStart.y, annotationDrawCurrent.y);
+    const width = x2 - x1;
+    const height = y2 - y1;
+
+    setAnnotationDrawStart(null);
+    setAnnotationDrawCurrent(null);
+
+    if (width < 10 || height < 10) return;
+
+    const bounds: AnnotationBounds = {
+      x: (x1 + x2) / 2,
+      y: (y1 + y2) / 2,
+      width,
+      height,
+    };
+
+    if (onAreaSelected) {
+      onAreaSelected(bounds);
+    }
+  }, [annotationDrawStart, annotationDrawCurrent, onAreaSelected]);
 
   const handleMouseMove = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
     if (!stageRef.current) return;
@@ -525,6 +585,9 @@ const MapCanvas: React.FC = () => {
         <div>🖱️ 左键拖动碎片 · Shift+旋转 15° 步进</div>
         <div>🖲️ 滚轮缩放画布 · 双击碎片 锁定/解锁</div>
         <div>👆 空白处点击 取消选中 · 边缘自动吸附</div>
+        {annotationMode && (
+          <div style={{ color: '#B8860B', fontWeight: 600 }}>📝 批注模式：拖动框选区域添加批注</div>
+        )}
       </div>
 
       <Stage
@@ -536,13 +599,16 @@ const MapCanvas: React.FC = () => {
         onClick={handleStageClick}
         onTap={handleStageClick}
         onWheel={handleWheel}
-        onMouseMove={handleMouseMove}
+        onMouseMove={annotationMode && annotationDrawStart ? handleAnnotationMouseMove : handleMouseMove}
         onMouseLeave={handleMouseLeave}
-        draggable={!selectedFragmentId}
+        onMouseDown={annotationMode ? handleAnnotationMouseDown : undefined}
+        onMouseUp={annotationMode ? handleAnnotationMouseUp : undefined}
+        draggable={!selectedFragmentId && !annotationMode}
         onDragEnd={(e) => {
           setOffset({ x: e.target.x(), y: e.target.y() });
           handleDragEnd();
         }}
+        style={{ cursor: annotationMode ? 'crosshair' : 'default' }}
       >
         <Layer>
           <Rect
@@ -602,6 +668,21 @@ const MapCanvas: React.FC = () => {
               isInConflict={conflictIds.has(fragment.id)}
             />
           ))}
+          <AnnotationLayer />
+          {annotationDrawStart && annotationDrawCurrent && (
+            <Rect
+              x={Math.min(annotationDrawStart.x, annotationDrawCurrent.x)}
+              y={Math.min(annotationDrawStart.y, annotationDrawCurrent.y)}
+              width={Math.abs(annotationDrawCurrent.x - annotationDrawStart.x)}
+              height={Math.abs(annotationDrawCurrent.y - annotationDrawStart.y)}
+              stroke="#B8860B"
+              strokeWidth={2}
+              dash={[8, 4]}
+              fill="#B8860B"
+              fillOpacity={0.08}
+              listening={false}
+            />
+          )}
           {renderMagnifier()}
         </Layer>
       </Stage>

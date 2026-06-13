@@ -130,11 +130,21 @@ export interface DiffChange {
   newValue: unknown;
 }
 
+export interface AnnotationDiffChange {
+  annotationId: string;
+  title: string;
+  type: 'added' | 'removed' | 'modified';
+  field?: string;
+  oldValue?: unknown;
+  newValue?: unknown;
+}
+
 export interface DiffResult {
   added: Fragment[];
   removed: Fragment[];
   modified: DiffChange[];
   unchanged: string[];
+  annotationDiff: AnnotationDiffChange[];
 }
 
 export interface AlignmentVerification {
@@ -160,6 +170,114 @@ export type UndoRedoAction =
   | 'reference'
   | 'batch';
 
+export type UserRole = 'curator' | 'reviewer' | 'project_lead';
+
+export type AnnotationType = 'research' | 'issue' | 'suggestion' | 'question' | 'info';
+export type AnnotationStatus = 'open' | 'in_progress' | 'resolved' | 'closed';
+export type AnnotationPriority = 'low' | 'medium' | 'high' | 'critical';
+export type ReviewDecision = 'approved' | 'rejected' | 'pending' | 'needs_revision';
+
+export interface AnnotationBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface AnnotationComment {
+  id: string;
+  annotationId: string;
+  author: string;
+  content: string;
+  createdAt: number;
+}
+
+export interface Annotation {
+  id: string;
+  schemeId: string;
+  fragmentId: string | null;
+  type: AnnotationType;
+  status: AnnotationStatus;
+  priority: AnnotationPriority;
+  title: string;
+  content: string;
+  author: string;
+  assignee: string | null;
+  bounds: AnnotationBounds | null;
+  tags: string[];
+  createdAt: number;
+  updatedAt: number;
+  resolvedAt: number | null;
+  versionTag: string | null;
+  comments: AnnotationComment[];
+}
+
+export interface ReviewVersion {
+  id: string;
+  schemeId: string;
+  versionNo: string;
+  name: string;
+  description: string;
+  author: string;
+  createdAt: number;
+  fragmentMap: Record<string, Fragment>;
+  fragmentOrder: string[];
+  referenceLines: ReferenceLine[];
+  annotations: Annotation[];
+  reviewDecision: ReviewDecision;
+  reviewComment: string | null;
+  reviewedBy: string | null;
+  reviewedAt: number | null;
+  changeSummary: string;
+  thumbnail?: string;
+}
+
+export interface AnnotationFilter {
+  types: AnnotationType[];
+  statuses: AnnotationStatus[];
+  priorities: AnnotationPriority[];
+  authors: string[];
+  assignees: string[];
+  tags: string[];
+  fragmentId: string | null;
+  searchText: string;
+}
+
+export interface ReviewReportData {
+  schemeId: string;
+  schemeName: string;
+  generatedAt: number;
+  generatedBy: string;
+  totalAnnotations: number;
+  resolvedAnnotations: number;
+  openAnnotations: number;
+  versions: ReviewVersion[];
+  annotations: Annotation[];
+  summary: {
+    byType: Record<AnnotationType, number>;
+    byStatus: Record<AnnotationStatus, number>;
+    byPriority: Record<AnnotationPriority, number>;
+  };
+  versionSummaries: {
+    versionId: string;
+    versionNo: string;
+    name: string;
+    decision: ReviewDecision;
+    fragmentCount: number;
+    annotationCount: number;
+    createdAt: number;
+    reviewedAt: number | null;
+    reviewedBy: string | null;
+  }[];
+}
+
+export interface DiffPlaybackState {
+  playing: boolean;
+  currentVersionIndex: number;
+  versions: ReviewVersion[];
+  speed: number;
+}
+
 export interface AppState {
   schemes: Record<string, Scheme>;
   activeSchemeId: string | null;
@@ -176,4 +294,12 @@ export interface AppState {
   magnifier: MagnifierState;
   snapshots: Record<string, SchemeSnapshot[]>;
   lastAction: UndoRedoAction | null;
+  annotations: Record<string, Annotation[]>;
+  reviewVersions: Record<string, ReviewVersion[]>;
+  annotationFilter: AnnotationFilter;
+  selectedAnnotationId: string | null;
+  annotationMode: boolean;
+  diffPlayback: DiffPlaybackState;
+  currentUser: string;
+  userRole: UserRole;
 }

@@ -2,13 +2,17 @@ import { create } from 'zustand';
 import type {
   AppState, Fragment, Scheme, OverlapInfo, EdgeFitScore, HistoryEntry, ToastMessage, CropEdges,
   SnapLine, ReferenceLine, SchemeSnapshot, DiffResult, AlignmentVerification, UndoRedoAction,
-  MagnifierState, RulerState, Point
+  MagnifierState, RulerState, Point,
+  Annotation, AnnotationType, AnnotationStatus, AnnotationPriority, AnnotationFilter,
+  AnnotationComment, UserRole,
+  ReviewVersion, ReviewDecision, ReviewReportData, AnnotationBounds
 } from '../types';
 import { loadFromStorage, saveToStorage } from '../utils/storage';
 import { createMockScheme, createEmptyScheme } from '../utils/mockData';
 import {
-  generateId, generateReferenceLineId, generateSnapshotId, calculateEdgeSnap,
-  calculateSchemesDiff, verifyAlignment, getFragmentEdges
+  generateId, generateReferenceLineId, generateSnapshotId, generateAnnotationId,
+  generateReviewVersionId, calculateEdgeSnap, calculateSchemesDiff, verifyAlignment,
+  getFragmentEdges
 } from '../utils/geometry';
 import {
   calculateOverlapSAT, getFragmentArea, calculateEdgeFitScore,
@@ -82,6 +86,50 @@ interface AppActions {
 
   verifyCurrentAlignment: () => AlignmentVerification | null;
   validateAndFixAllFragments: () => void;
+
+  setAnnotationMode: (enabled: boolean) => void;
+  selectAnnotation: (annotationId: string | null) => void;
+  addAnnotation: (data: {
+    fragmentId?: string | null;
+    type: AnnotationType;
+    title: string;
+    content: string;
+    bounds?: AnnotationBounds | null;
+    tags?: string[];
+    priority?: AnnotationPriority;
+    assignee?: string | null;
+  }) => void;
+  updateAnnotation: (annotationId: string, updates: Partial<Annotation>) => void;
+  deleteAnnotation: (annotationId: string) => void;
+  getAnnotations: () => Annotation[];
+  getFilteredAnnotations: () => Annotation[];
+  setAnnotationFilter: (filter: Partial<AnnotationFilter>) => void;
+  resetAnnotationFilter: () => void;
+  changeAnnotationStatus: (annotationId: string, status: AnnotationStatus) => void;
+  assignAnnotation: (annotationId: string, assignee: string | null) => void;
+  addAnnotationComment: (annotationId: string, content: string) => void;
+  deleteAnnotationComment: (annotationId: string, commentId: string) => void;
+
+  createReviewVersion: (data: {
+    name: string;
+    description: string;
+    changeSummary: string;
+  }) => string;
+  getReviewVersions: () => ReviewVersion[];
+  deleteReviewVersion: (versionId: string) => void;
+  reviewVersion: (versionId: string, decision: ReviewDecision, comment: string) => void;
+  restoreReviewVersion: (versionId: string) => void;
+
+  setDiffPlaybackVersions: (versions: ReviewVersion[]) => void;
+  setDiffPlaybackIndex: (index: number) => void;
+  setDiffPlaybackPlaying: (playing: boolean) => void;
+  setDiffPlaybackSpeed: (speed: number) => void;
+
+  generateReviewReport: () => ReviewReportData | null;
+  exportReviewReport: () => string | null;
+
+  setCurrentUser: (name: string) => void;
+  setUserRole: (role: UserRole) => void;
 
   persist: () => void;
 }
@@ -182,6 +230,28 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
   },
   snapshots: {},
   lastAction: null,
+  annotations: {},
+  reviewVersions: {},
+  annotationFilter: {
+    types: [],
+    statuses: [],
+    priorities: [],
+    authors: [],
+    assignees: [],
+    tags: [],
+    fragmentId: null,
+    searchText: '',
+  },
+  selectedAnnotationId: null,
+  annotationMode: false,
+  diffPlayback: {
+    playing: false,
+    currentVersionIndex: 0,
+    versions: [],
+    speed: 1,
+  },
+  currentUser: '整理人员',
+  userRole: 'curator' as UserRole,
 
   init: () => {
     const stored = loadFromStorage();
@@ -192,6 +262,10 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
         schemes: stored.schemes,
         activeSchemeId: firstId,
         referenceLines: firstScheme?.referenceLines || [],
+        annotations: stored.annotations || {},
+        reviewVersions: stored.reviewVersions || {},
+        currentUser: stored.currentUser || '整理人员',
+        userRole: (stored.userRole as UserRole) || 'curator',
       });
     } else {
       const mock = createMockScheme();
@@ -199,6 +273,10 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
         schemes: { [mock.id]: mock },
         activeSchemeId: mock.id,
         referenceLines: mock.referenceLines || [],
+        annotations: {},
+        reviewVersions: {},
+        currentUser: '整理人员',
+        userRole: 'curator' as UserRole,
       });
       get().persist();
     }
@@ -982,12 +1060,550 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     return verifyAlignment(fragments, s.conflicts);
   },
 
+  setAnnotationMode: (enabled) => {
+    set({ annotationMode: enabled });
+  },
+
+  selectAnnotation: (annotationId) => {
+    set({ selectedAnnotationId: annotationId });
+  },
+
+  addAnnotation: (data) => {
+    const s = get();
+    const schemeId = s.activeSchemeId;
+    if (!schemeId) return;
+
+    const annotation: Annotation = {
+      id: generateAnnotationId(),
+      schemeId,
+      fragmentId: data.fragmentId ?? null,
+      type: data.type,
+      status: 'open',
+      priority: data.priority ?? 'medium',
+      title: data.title,
+      content: data.content,
+      author: s.currentUser,
+      assignee: data.assignee ?? null,
+      bounds: data.bounds ?? null,
+      tags: data.tags ?? [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      resolvedAt: null,
+      versionTag: null,
+      comments: [],
+    };
+
+    const schemeAnnotations = s.annotations[schemeId] || [];
+    set({
+      annotations: {
+        ...s.annotations,
+        [schemeId]: [...schemeAnnotations, annotation],
+      },
+      selectedAnnotationId: annotation.id,
+    });
+    s.persist();
+    s.addToast('success', `已添加${getAnnotationTypeLabel(data.type)}批注`);
+  },
+
+  updateAnnotation: (annotationId, updates) => {
+    const s = get();
+    const schemeId = s.activeSchemeId;
+    if (!schemeId) return;
+
+    const schemeAnnotations = s.annotations[schemeId] || [];
+    const updatedAnnotations = schemeAnnotations.map((a) => {
+      if (a.id === annotationId) {
+        const newStatus = updates.status;
+        return {
+          ...a,
+          ...updates,
+          updatedAt: Date.now(),
+          resolvedAt: newStatus === 'resolved' || newStatus === 'closed' ? Date.now() : a.resolvedAt,
+        };
+      }
+      return a;
+    });
+
+    set({
+      annotations: {
+        ...s.annotations,
+        [schemeId]: updatedAnnotations,
+      },
+    });
+    s.persist();
+  },
+
+  deleteAnnotation: (annotationId) => {
+    const s = get();
+    const schemeId = s.activeSchemeId;
+    if (!schemeId) return;
+
+    const schemeAnnotations = s.annotations[schemeId] || [];
+    const annotation = schemeAnnotations.find((a) => a.id === annotationId);
+
+    set({
+      annotations: {
+        ...s.annotations,
+        [schemeId]: schemeAnnotations.filter((a) => a.id !== annotationId),
+      },
+      selectedAnnotationId: s.selectedAnnotationId === annotationId ? null : s.selectedAnnotationId,
+    });
+    s.persist();
+    if (annotation) {
+      s.addToast('info', '批注已删除');
+    }
+  },
+
+  getAnnotations: () => {
+    const s = get();
+    const schemeId = s.activeSchemeId;
+    if (!schemeId) return [];
+    return s.annotations[schemeId] || [];
+  },
+
+  getFilteredAnnotations: () => {
+    const s = get();
+    const schemeId = s.activeSchemeId;
+    if (!schemeId) return [];
+
+    const annotations = s.annotations[schemeId] || [];
+    const filter = s.annotationFilter;
+
+    return annotations.filter((anno) => {
+      if (filter.types.length > 0 && !filter.types.includes(anno.type)) return false;
+      if (filter.statuses.length > 0 && !filter.statuses.includes(anno.status)) return false;
+      if (filter.priorities.length > 0 && !filter.priorities.includes(anno.priority)) return false;
+      if (filter.authors.length > 0 && !filter.authors.includes(anno.author)) return false;
+      if (filter.assignees.length > 0 && !filter.assignees.includes(anno.assignee ?? '')) return false;
+      if (filter.fragmentId && anno.fragmentId !== filter.fragmentId) return false;
+      if (filter.tags.length > 0 && !filter.tags.some((t) => anno.tags.includes(t))) return false;
+      if (filter.searchText) {
+        const search = filter.searchText.toLowerCase();
+        if (
+          !anno.title.toLowerCase().includes(search) &&
+          !anno.content.toLowerCase().includes(search)
+        ) {
+          return false;
+        }
+      }
+      return true;
+    });
+  },
+
+  setAnnotationFilter: (filter) => {
+    const s = get();
+    set({
+      annotationFilter: {
+        ...s.annotationFilter,
+        ...filter,
+      },
+    });
+  },
+
+  resetAnnotationFilter: () => {
+    set({
+      annotationFilter: {
+        types: [],
+        statuses: [],
+        priorities: [],
+        authors: [],
+        assignees: [],
+        tags: [],
+        fragmentId: null,
+        searchText: '',
+      },
+    });
+  },
+
+  changeAnnotationStatus: (annotationId, status) => {
+    const s = get();
+    s.updateAnnotation(annotationId, { status });
+    const statusLabel = getAnnotationStatusLabel(status);
+    s.addToast('info', `批注状态已更新为「${statusLabel}」`);
+  },
+
+  assignAnnotation: (annotationId, assignee) => {
+    const s = get();
+    s.updateAnnotation(annotationId, { assignee });
+    s.addToast('info', assignee ? `已指派给 ${assignee}` : '已取消指派');
+  },
+
+  addAnnotationComment: (annotationId, content) => {
+    const s = get();
+    const schemeId = s.activeSchemeId;
+    if (!schemeId) return;
+
+    const schemeAnnotations = s.annotations[schemeId] || [];
+    const annotation = schemeAnnotations.find((a) => a.id === annotationId);
+    if (!annotation) return;
+
+    const comment: AnnotationComment = {
+      id: generateId(),
+      annotationId,
+      author: s.currentUser,
+      content: content.trim(),
+      createdAt: Date.now(),
+    };
+
+    const updatedAnnotations = schemeAnnotations.map((a) => {
+      if (a.id === annotationId) {
+        return {
+          ...a,
+          comments: [...a.comments, comment],
+          updatedAt: Date.now(),
+        };
+      }
+      return a;
+    });
+
+    set({
+      annotations: {
+        ...s.annotations,
+        [schemeId]: updatedAnnotations,
+      },
+    });
+    s.persist();
+  },
+
+  deleteAnnotationComment: (annotationId, commentId) => {
+    const s = get();
+    const schemeId = s.activeSchemeId;
+    if (!schemeId) return;
+
+    const schemeAnnotations = s.annotations[schemeId] || [];
+    const updatedAnnotations = schemeAnnotations.map((a) => {
+      if (a.id === annotationId) {
+        return {
+          ...a,
+          comments: a.comments.filter((c) => c.id !== commentId),
+          updatedAt: Date.now(),
+        };
+      }
+      return a;
+    });
+
+    set({
+      annotations: {
+        ...s.annotations,
+        [schemeId]: updatedAnnotations,
+      },
+    });
+    s.persist();
+  },
+
+  createReviewVersion: (data) => {
+    const s = get();
+    const schemeId = s.activeSchemeId;
+    if (!schemeId) return '';
+
+    const scheme = s.schemes[schemeId];
+    if (!scheme) return '';
+
+    const versions = s.reviewVersions[schemeId] || [];
+    const versionNo = `v${versions.length + 1}.0`;
+
+    const version: ReviewVersion = {
+      id: generateReviewVersionId(),
+      schemeId,
+      versionNo,
+      name: data.name,
+      description: data.description,
+      author: s.currentUser,
+      createdAt: Date.now(),
+      fragmentMap: deepClone(scheme.fragmentMap),
+      fragmentOrder: [...scheme.fragmentOrder],
+      referenceLines: deepClone(scheme.referenceLines),
+      annotations: deepClone(s.annotations[schemeId] || []),
+      reviewDecision: 'pending',
+      reviewComment: null,
+      reviewedBy: null,
+      reviewedAt: null,
+      changeSummary: data.changeSummary,
+    };
+
+    set({
+      reviewVersions: {
+        ...s.reviewVersions,
+        [schemeId]: [...versions, version],
+      },
+    });
+    s.persist();
+    s.addToast('success', `已创建审阅版本 ${versionNo}`);
+    return version.id;
+  },
+
+  getReviewVersions: () => {
+    const s = get();
+    const schemeId = s.activeSchemeId;
+    if (!schemeId) return [];
+    return s.reviewVersions[schemeId] || [];
+  },
+
+  deleteReviewVersion: (versionId) => {
+    const s = get();
+    const schemeId = s.activeSchemeId;
+    if (!schemeId) return;
+
+    const versions = s.reviewVersions[schemeId] || [];
+    const version = versions.find((v) => v.id === versionId);
+
+    set({
+      reviewVersions: {
+        ...s.reviewVersions,
+        [schemeId]: versions.filter((v) => v.id !== versionId),
+      },
+    });
+    s.persist();
+    if (version) {
+      s.addToast('info', `审阅版本 ${version.versionNo} 已删除`);
+    }
+  },
+
+  reviewVersion: (versionId, decision, comment) => {
+    const s = get();
+    const schemeId = s.activeSchemeId;
+    if (!schemeId) return;
+
+    const versions = s.reviewVersions[schemeId] || [];
+    const updatedVersions = versions.map((v) => {
+      if (v.id === versionId) {
+        return {
+          ...v,
+          reviewDecision: decision,
+          reviewComment: comment,
+          reviewedBy: s.currentUser,
+          reviewedAt: Date.now(),
+        };
+      }
+      return v;
+    });
+
+    set({
+      reviewVersions: {
+        ...s.reviewVersions,
+        [schemeId]: updatedVersions,
+      },
+    });
+    s.persist();
+    const decisionLabel = getReviewDecisionLabel(decision);
+    s.addToast('success', `已${decisionLabel}此版本`);
+  },
+
+  restoreReviewVersion: (versionId) => {
+    const s = get();
+    const schemeId = s.activeSchemeId;
+    if (!schemeId) return;
+
+    const versions = s.reviewVersions[schemeId] || [];
+    const version = versions.find((v) => v.id === versionId);
+    if (!version) return;
+
+    const scheme = s.schemes[schemeId];
+    if (!scheme) return;
+
+    s.pushHistory(`恢复审阅版本 ${version.versionNo}`, 'batch');
+
+    const updatedScheme = {
+      ...scheme,
+      fragmentMap: deepClone(version.fragmentMap),
+      fragmentOrder: [...version.fragmentOrder],
+      referenceLines: deepClone(version.referenceLines),
+      updatedAt: Date.now(),
+    };
+
+    set({
+      schemes: {
+        ...s.schemes,
+        [schemeId]: updatedScheme,
+      },
+      referenceLines: deepClone(version.referenceLines),
+      annotations: {
+        ...s.annotations,
+        [schemeId]: deepClone(version.annotations),
+      },
+    });
+    s.recalculateConflicts();
+    s.recalculateEdgeFits();
+    s.persist();
+    s.addToast('success', `已恢复到审阅版本 ${version.versionNo}`);
+  },
+
+  setDiffPlaybackVersions: (versions) => {
+    set({
+      diffPlayback: {
+        ...get().diffPlayback,
+        versions,
+        currentVersionIndex: 0,
+        playing: false,
+      },
+    });
+  },
+
+  setDiffPlaybackIndex: (index) => {
+    const s = get();
+    const clampedIndex = Math.max(0, Math.min(s.diffPlayback.versions.length - 1, index));
+    set({
+      diffPlayback: {
+        ...s.diffPlayback,
+        currentVersionIndex: clampedIndex,
+      },
+    });
+  },
+
+  setDiffPlaybackPlaying: (playing) => {
+    set({
+      diffPlayback: {
+        ...get().diffPlayback,
+        playing,
+      },
+    });
+  },
+
+  setDiffPlaybackSpeed: (speed) => {
+    set({
+      diffPlayback: {
+        ...get().diffPlayback,
+        speed: Math.max(0.5, Math.min(4, speed)),
+      },
+    });
+  },
+
+  generateReviewReport: () => {
+    const s = get();
+    const schemeId = s.activeSchemeId;
+    if (!schemeId) return null;
+
+    const scheme = s.schemes[schemeId];
+    if (!scheme) return null;
+
+    const annotations = s.annotations[schemeId] || [];
+    const versions = s.reviewVersions[schemeId] || [];
+
+    const byType: Record<AnnotationType, number> = {
+      research: 0,
+      issue: 0,
+      suggestion: 0,
+      question: 0,
+      info: 0,
+    };
+    const byStatus: Record<AnnotationStatus, number> = {
+      open: 0,
+      in_progress: 0,
+      resolved: 0,
+      closed: 0,
+    };
+    const byPriority: Record<AnnotationPriority, number> = {
+      low: 0,
+      medium: 0,
+      high: 0,
+      critical: 0,
+    };
+
+    annotations.forEach((anno) => {
+      byType[anno.type]++;
+      byStatus[anno.status]++;
+      byPriority[anno.priority]++;
+    });
+
+    const report: ReviewReportData = {
+      schemeId,
+      schemeName: scheme.name,
+      generatedAt: Date.now(),
+      generatedBy: s.currentUser,
+      totalAnnotations: annotations.length,
+      resolvedAnnotations: byStatus.resolved + byStatus.closed,
+      openAnnotations: byStatus.open + byStatus.in_progress,
+      versions,
+      annotations,
+      summary: { byType, byStatus, byPriority },
+      versionSummaries: versions.map((v) => ({
+        versionId: v.id,
+        versionNo: v.versionNo,
+        name: v.name,
+        decision: v.reviewDecision,
+        fragmentCount: Object.keys(v.fragmentMap).length,
+        annotationCount: v.annotations.length,
+        createdAt: v.createdAt,
+        reviewedAt: v.reviewedAt,
+        reviewedBy: v.reviewedBy,
+      })),
+    };
+
+    return report;
+  },
+
+  exportReviewReport: () => {
+    const s = get();
+    const report = s.generateReviewReport();
+    if (!report) return null;
+
+    const json = JSON.stringify(report, null, 2);
+    const filename = `审阅报告_${report.schemeName.replace(/\s+/g, '_')}_${new Date().toISOString().slice(0, 10)}.json`;
+
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    s.addToast('success', `审阅报告已导出: ${filename}`);
+    return filename;
+  },
+
+  setCurrentUser: (name) => {
+    set({ currentUser: name });
+  },
+
+  setUserRole: (role) => {
+    set({ userRole: role });
+    get().persist();
+  },
+
   persist: () => {
     const s = get();
     saveToStorage({
       schemes: s.schemes,
       activeSchemeId: s.activeSchemeId,
       snapshots: s.snapshots,
+      annotations: s.annotations,
+      reviewVersions: s.reviewVersions,
+      currentUser: s.currentUser,
+      userRole: s.userRole,
     });
   },
 }));
+
+function getAnnotationTypeLabel(type: AnnotationType): string {
+  const labels: Record<AnnotationType, string> = {
+    research: '考据',
+    issue: '问题',
+    suggestion: '修复建议',
+    question: '疑问',
+    info: '备注',
+  };
+  return labels[type];
+}
+
+function getAnnotationStatusLabel(status: AnnotationStatus): string {
+  const labels: Record<AnnotationStatus, string> = {
+    open: '待处理',
+    in_progress: '处理中',
+    resolved: '已解决',
+    closed: '已关闭',
+  };
+  return labels[status];
+}
+
+function getReviewDecisionLabel(decision: ReviewDecision): string {
+  const labels: Record<ReviewDecision, string> = {
+    approved: '审核通过',
+    rejected: '驳回',
+    pending: '待审核',
+    needs_revision: '需修改',
+  };
+  return labels[decision];
+}

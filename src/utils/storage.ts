@@ -1,4 +1,4 @@
-import type { Scheme, SchemeSnapshot } from '../types';
+import type { Scheme, SchemeSnapshot, Annotation, ReviewVersion } from '../types';
 
 const STORAGE_KEY = 'ancient_map_workbench';
 
@@ -6,6 +6,10 @@ export interface StorageData {
   schemes: Record<string, Scheme>;
   activeSchemeId: string | null;
   snapshots?: Record<string, SchemeSnapshot[]>;
+  annotations?: Record<string, Annotation[]>;
+  reviewVersions?: Record<string, ReviewVersion[]>;
+  currentUser?: string;
+  userRole?: string;
 }
 
 export function loadFromStorage(): StorageData | null {
@@ -16,6 +20,15 @@ export function loadFromStorage(): StorageData | null {
     Object.values(data.schemes).forEach(scheme => {
       if (!scheme.history) scheme.history = [];
       if (typeof scheme.historyIndex !== 'number') scheme.historyIndex = -1;
+    });
+    if (!data.annotations) data.annotations = {};
+    if (!data.reviewVersions) data.reviewVersions = {};
+    if (!data.currentUser) data.currentUser = '整理人员';
+    if (!data.userRole) data.userRole = 'curator';
+    Object.values(data.annotations).forEach(annoList => {
+      annoList.forEach(anno => {
+        if (!anno.comments) anno.comments = [];
+      });
     });
     return data;
   } catch {

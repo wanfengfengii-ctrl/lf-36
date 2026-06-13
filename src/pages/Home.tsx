@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { Box, Paper, styled, Divider, Typography, Accordion, AccordionSummary, AccordionDetails } from '@mui/material';
 import {
   ExpandMore as ExpandMoreIcon,
@@ -6,6 +6,7 @@ import {
   StackedLineChart as OverlapIcon,
   JoinInner as EdgeIcon,
   HourglassEmpty as PendingIcon,
+  Comment as CommentIcon,
 } from '@mui/icons-material';
 import { useAppStore } from '../store/useAppStore';
 import AppToolbar from '../components/toolbar/AppToolbar';
@@ -17,7 +18,11 @@ import AssemblyOrder from '../components/right-panel/AssemblyOrder';
 import OverlapList from '../components/right-panel/OverlapList';
 import EdgeFitPanel from '../components/right-panel/EdgeFitPanel';
 import PendingFragments from '../components/right-panel/PendingFragments';
+import AnnotationPanel from '../components/right-panel/AnnotationPanel';
 import ToastContainer from '../components/common/ToastContainer';
+import AnnotationEditorDialog from '../components/common/AnnotationEditorDialog';
+import ReviewCenterDialog from '../components/common/ReviewCenterDialog';
+import type { Annotation, AnnotationBounds } from '../types';
 
 const MainContainer = styled(Box)(({ theme }) => ({
   display: 'flex',
@@ -117,7 +122,12 @@ const Home: React.FC = () => {
   const removeFragment = useAppStore((s) => s.removeFragment);
   const toggleLock = useAppStore((s) => s.toggleLock);
   const addToast = useAppStore((s) => s.addToast);
-  const [rightExpanded, setRightExpanded] = useState<string[]>(['assembly', 'overlap', 'edgefit', 'pending']);
+  const { annotationMode, setAnnotationMode } = useAppStore();
+  const [rightExpanded, setRightExpanded] = useState<string[]>(['annotation', 'assembly', 'overlap', 'edgefit', 'pending']);
+  const [annotationEditorOpen, setAnnotationEditorOpen] = useState(false);
+  const [editingAnnotation, setEditingAnnotation] = useState<Annotation | null>(null);
+  const [defaultBounds, setDefaultBounds] = useState<AnnotationBounds | null>(null);
+  const [reviewCenterOpen, setReviewCenterOpen] = useState(false);
 
   useEffect(() => {
     init();
@@ -148,12 +158,19 @@ const Home: React.FC = () => {
       } else if (ctrlOrCmd && e.key === 'l' && selectedFragmentId) {
         e.preventDefault();
         toggleLock(selectedFragmentId);
+      } else if (ctrlOrCmd && e.key === 'm') {
+        e.preventDefault();
+        setAnnotationMode(!annotationMode);
+        addToast('info', `批注模式已${annotationMode ? '关闭' : '开启'}`);
+      } else if (ctrlOrCmd && e.shiftKey && e.key === 'r') {
+        e.preventDefault();
+        setReviewCenterOpen(true);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [undo, redo, persist, removeFragment, toggleLock, selectedFragmentId, addToast]);
+  }, [undo, redo, persist, removeFragment, toggleLock, selectedFragmentId, addToast, annotationMode, setAnnotationMode]);
 
   const handleAccordionChange = (panel: string) => (
     _event: React.SyntheticEvent,
@@ -164,9 +181,26 @@ const Home: React.FC = () => {
     );
   };
 
+  const handleAddAnnotation = useCallback(() => {
+    setEditingAnnotation(null);
+    setDefaultBounds(null);
+    setAnnotationEditorOpen(true);
+  }, []);
+
+  const handleAreaSelected = useCallback((bounds: AnnotationBounds) => {
+    setEditingAnnotation(null);
+    setDefaultBounds(bounds);
+    setAnnotationEditorOpen(true);
+  }, []);
+
+  const handleEditAnnotation = useCallback((annotation: Annotation) => {
+    setEditingAnnotation(annotation);
+    setAnnotationEditorOpen(true);
+  }, []);
+
   return (
     <MainContainer>
-      <AppToolbar />
+      <AppToolbar onOpenReviewCenter={() => setReviewCenterOpen(true)} />
       <ContentArea>
         <LeftPanel elevation={1}>
           <PanelSection>
@@ -189,10 +223,30 @@ const Home: React.FC = () => {
         </LeftPanel>
 
         <CanvasPanel>
-          <MapCanvas />
+          <MapCanvas onAreaSelected={handleAreaSelected} />
         </CanvasPanel>
 
         <RightPanel elevation={1}>
+          <StyledAccordion
+            expanded={rightExpanded.includes('annotation')}
+            onChange={handleAccordionChange('annotation')}
+          >
+            <AccordionSummary expandIcon={<ExpandMoreIcon sx={{ fontSize: 18 }} />}>
+              <SectionHeader>
+                <CommentIcon />
+                <Typography variant="subtitle2" sx={{ fontFamily: 'Noto Serif SC, serif', fontWeight: 600 }}>
+                  考据批注
+                </Typography>
+              </SectionHeader>
+            </AccordionSummary>
+            <AccordionDetails sx={{ p: 0, height: 320 }}>
+              <AnnotationPanel
+                onAddAnnotation={handleAddAnnotation}
+                onEditAnnotation={handleEditAnnotation}
+              />
+            </AccordionDetails>
+          </StyledAccordion>
+
           <StyledAccordion
             expanded={rightExpanded.includes('assembly')}
             onChange={handleAccordionChange('assembly')}
@@ -263,6 +317,16 @@ const Home: React.FC = () => {
         </RightPanel>
       </ContentArea>
       <ToastContainer />
+      <AnnotationEditorDialog
+        open={annotationEditorOpen}
+        onClose={() => { setAnnotationEditorOpen(false); setDefaultBounds(null); }}
+        annotation={editingAnnotation}
+        defaultBounds={defaultBounds}
+      />
+      <ReviewCenterDialog
+        open={reviewCenterOpen}
+        onClose={() => setReviewCenterOpen(false)}
+      />
     </MainContainer>
   );
 };
