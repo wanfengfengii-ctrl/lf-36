@@ -22,7 +22,7 @@ import AnnotationPanel from '../components/right-panel/AnnotationPanel';
 import ToastContainer from '../components/common/ToastContainer';
 import AnnotationEditorDialog from '../components/common/AnnotationEditorDialog';
 import ReviewCenterDialog from '../components/common/ReviewCenterDialog';
-import type { Annotation, AnnotationBounds } from '../types';
+import type { Annotation } from '../types';
 
 const MainContainer = styled(Box)(({ theme }) => ({
   display: 'flex',
@@ -126,7 +126,6 @@ const Home: React.FC = () => {
   const [rightExpanded, setRightExpanded] = useState<string[]>(['annotation', 'assembly', 'overlap', 'edgefit', 'pending']);
   const [annotationEditorOpen, setAnnotationEditorOpen] = useState(false);
   const [editingAnnotation, setEditingAnnotation] = useState<Annotation | null>(null);
-  const [defaultBounds, setDefaultBounds] = useState<AnnotationBounds | null>(null);
   const [reviewCenterOpen, setReviewCenterOpen] = useState(false);
 
   useEffect(() => {
@@ -183,13 +182,6 @@ const Home: React.FC = () => {
 
   const handleAddAnnotation = useCallback(() => {
     setEditingAnnotation(null);
-    setDefaultBounds(null);
-    setAnnotationEditorOpen(true);
-  }, []);
-
-  const handleAreaSelected = useCallback((bounds: AnnotationBounds) => {
-    setEditingAnnotation(null);
-    setDefaultBounds(bounds);
     setAnnotationEditorOpen(true);
   }, []);
 
@@ -223,7 +215,7 @@ const Home: React.FC = () => {
         </LeftPanel>
 
         <CanvasPanel>
-          <MapCanvas onAreaSelected={handleAreaSelected} />
+          <MapCanvas />
         </CanvasPanel>
 
         <RightPanel elevation={1}>
@@ -319,9 +311,8 @@ const Home: React.FC = () => {
       <ToastContainer />
       <AnnotationEditorDialog
         open={annotationEditorOpen}
-        onClose={() => { setAnnotationEditorOpen(false); setDefaultBounds(null); }}
+        onClose={() => setAnnotationEditorOpen(false)}
         annotation={editingAnnotation}
-        defaultBounds={defaultBounds}
       />
       <ReviewCenterDialog
         open={reviewCenterOpen}

@@ -321,10 +321,8 @@ const AnnotationPanel: React.FC<AnnotationPanelProps> = ({ onAddAnnotation, onEd
             placeholder="搜索批注..."
             value={searchText}
             onChange={handleSearchChange}
-            slotProps={{
-              input: {
-                startAdornment: <SearchIcon sx={{ fontSize: 18, mr: 1, color: 'text.disabled' }} />,
-              },
+            InputProps={{
+              startAdornment: <SearchIcon sx={{ fontSize: 18, mr: 1, color: 'text.disabled' }} />,
             }}
             sx={{ mb: 1.5 }}
           />

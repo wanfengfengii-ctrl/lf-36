@@ -11,7 +11,6 @@ import {
   ListItem,
   ListItemText,
   ListItemIcon,
-  ListItemButton,
   Chip,
   Divider,
   TextField,
@@ -26,6 +25,9 @@ import {
   MenuItem,
   FormControl,
   InputLabel,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
   LinearProgress,
 } from '@mui/material';
 import {
@@ -36,7 +38,6 @@ import {
   SkipPrevious as PrevIcon,
   SkipNext as NextIcon,
   Edit as EditNoteIcon,
-  ModeEdit as EditIcon,
   History as HistoryIcon,
   Visibility as ViewIcon,
   Delete as DeleteIcon,
@@ -70,8 +71,6 @@ import type {
   AnnotationType,
   AnnotationStatus,
   UserRole,
-  AnnotationDiffChange,
-  Annotation,
 } from '../../types';
 
 interface ReviewCenterDialogProps {
@@ -198,73 +197,7 @@ function computeVersionDiff(prevVersion: ReviewVersion, currentVersion: ReviewVe
     }
   });
 
-  const annotationDiff = computeAnnotationDiff(prevVersion.annotations, currentVersion.annotations);
-
-  return { added, removed, modified, unchanged, annotationDiff };
-}
-
-function computeAnnotationDiff(prevAnnotations: Annotation[], currAnnotations: Annotation[]): AnnotationDiffChange[] {
-  const diff: AnnotationDiffChange[] = [];
-  const prevById = new Map(prevAnnotations.map((a) => [a.id, a]));
-  const currById = new Map(currAnnotations.map((a) => [a.id, a]));
-  const allAnnoIds = new Set([...prevById.keys(), ...currById.keys()]);
-
-  const fieldsToCompare: (keyof Annotation)[] = [
-    'title', 'content', 'type', 'status', 'priority', 'assignee', 'fragmentId', 'versionTag',
-  ];
-
-  allAnnoIds.forEach((id) => {
-    const inPrev = prevById.has(id);
-    const inCurr = currById.has(id);
-
-    if (!inPrev && inCurr) {
-      const anno = currById.get(id)!;
-      diff.push({ annotationId: id, title: anno.title, type: 'added' });
-    } else if (inPrev && !inCurr) {
-      const anno = prevById.get(id)!;
-      diff.push({ annotationId: id, title: anno.title, type: 'removed' });
-    } else {
-      const prevAnno = prevById.get(id)!;
-      const currAnno = currById.get(id)!;
-
-      fieldsToCompare.forEach((field) => {
-        if (JSON.stringify(prevAnno[field]) !== JSON.stringify(currAnno[field])) {
-          diff.push({
-            annotationId: id,
-            title: currAnno.title,
-            type: 'modified',
-            field: String(field),
-            oldValue: prevAnno[field],
-            newValue: currAnno[field],
-          });
-        }
-      });
-
-      if (JSON.stringify(prevAnno.bounds) !== JSON.stringify(currAnno.bounds)) {
-        diff.push({
-          annotationId: id,
-          title: currAnno.title,
-          type: 'modified',
-          field: 'bounds',
-          oldValue: prevAnno.bounds,
-          newValue: currAnno.bounds,
-        });
-      }
-
-      if (JSON.stringify(prevAnno.tags) !== JSON.stringify(currAnno.tags)) {
-        diff.push({
-          annotationId: id,
-          title: currAnno.title,
-          type: 'modified',
-          field: 'tags',
-          oldValue: prevAnno.tags,
-          newValue: currAnno.tags,
-        });
-      }
-    }
-  });
-
-  return diff;
+  return { added, removed, modified, unchanged };
 }
 
 const ROLE_LABELS: Record<UserRole, string> = {
@@ -591,93 +524,32 @@ const DiffPlaybackPanel: React.FC<{ versions: ReviewVersion[] }> = ({ versions }
           {diffResult && (
             <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
               <Chip
-                label={`碎片新增: ${diffResult.added.length}`}
+                label={`新增: ${diffResult.added.length}`}
                 color="success"
                 size="small"
                 variant="outlined"
                 sx={{ height: 22, fontSize: 11 }}
               />
               <Chip
-                label={`碎片删除: ${diffResult.removed.length}`}
+                label={`删除: ${diffResult.removed.length}`}
                 color="error"
                 size="small"
                 variant="outlined"
                 sx={{ height: 22, fontSize: 11 }}
               />
               <Chip
-                label={`碎片修改: ${diffResult.modified.length}`}
+                label={`修改: ${diffResult.modified.length}`}
                 color="warning"
                 size="small"
                 variant="outlined"
                 sx={{ height: 22, fontSize: 11 }}
               />
               <Chip
-                label={`碎片未变: ${diffResult.unchanged.length}`}
+                label={`未变: ${diffResult.unchanged.length}`}
                 size="small"
                 variant="outlined"
                 sx={{ height: 22, fontSize: 11 }}
               />
-            </Box>
-          )}
-
-          {diffResult && diffResult.annotationDiff.length > 0 && (
-            <Box sx={{ mt: 1 }}>
-              <Typography variant="caption" sx={{ fontWeight: 600, mb: 0.5, display: 'block', color: 'text.secondary' }}>
-                批注变化
-              </Typography>
-              <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mb: 0.5 }}>
-                <Chip
-                  label={`新增: ${diffResult.annotationDiff.filter(d => d.type === 'added').length}`}
-                  color="success"
-                  size="small"
-                  variant="outlined"
-                  sx={{ height: 20, fontSize: 10 }}
-                />
-                <Chip
-                  label={`删除: ${diffResult.annotationDiff.filter(d => d.type === 'removed').length}`}
-                  color="error"
-                  size="small"
-                  variant="outlined"
-                  sx={{ height: 20, fontSize: 10 }}
-                />
-                <Chip
-                  label={`修改: ${diffResult.annotationDiff.filter(d => d.type === 'modified').length}`}
-                  color="warning"
-                  size="small"
-                  variant="outlined"
-                  sx={{ height: 20, fontSize: 10 }}
-                />
-              </Box>
-              <Box sx={{ maxHeight: 120, overflow: 'auto' }}>
-                {diffResult.annotationDiff.slice(0, 10).map((change, idx) => (
-                  <Box key={idx} sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.3 }}>
-                    {change.type === 'added' && <AddIcon sx={{ fontSize: 12, color: 'success.main' }} />}
-                    {change.type === 'removed' && <DeleteIcon sx={{ fontSize: 12, color: 'error.main' }} />}
-                    {change.type === 'modified' && <EditIcon sx={{ fontSize: 12, color: 'warning.main' }} />}
-                    <Typography variant="caption" sx={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {change.title}
-                    </Typography>
-                    {change.field && (
-                      <>
-                        <Typography variant="caption" color="text.secondary">
-                          {change.field}:
-                        </Typography>
-                        <Typography variant="caption" sx={{ color: 'error.main', textDecoration: 'line-through', maxWidth: 60, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {JSON.stringify(change.oldValue)}
-                        </Typography>
-                        <Typography variant="caption" sx={{ color: 'success.main', maxWidth: 60, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {JSON.stringify(change.newValue)}
-                        </Typography>
-                      </>
-                    )}
-                  </Box>
-                ))}
-                {diffResult.annotationDiff.length > 10 && (
-                  <Typography variant="caption" color="text.disabled">
-                    ...还有 {diffResult.annotationDiff.length - 10} 处批注变化
-                  </Typography>
-                )}
-              </Box>
             </Box>
           )}
 
@@ -705,9 +577,9 @@ const DiffPlaybackPanel: React.FC<{ versions: ReviewVersion[] }> = ({ versions }
             </Box>
           )}
 
-          {diffResult && diffResult.added.length === 0 && diffResult.removed.length === 0 && diffResult.modified.length === 0 && diffResult.annotationDiff.length === 0 && (
+          {diffResult && diffResult.added.length === 0 && diffResult.removed.length === 0 && diffResult.modified.length === 0 && (
             <Typography variant="caption" color="text.disabled" sx={{ display: 'block', textAlign: 'center', py: 0.5 }}>
-              此版本与上一版无碎片和批注差异
+              此版本与上一版无碎片差异
             </Typography>
           )}
         </Paper>
@@ -1296,29 +1168,27 @@ const ReviewCenterDialog: React.FC<ReviewCenterDialogProps> = ({ open, onClose }
                   {sortedVersions.length === 0 ? (
                     <ListItem>
                       <ListItemText
-                        primary={<Typography variant="body2" color="text.disabled">暂无审阅版本</Typography>}
-                        secondary={<Typography variant="caption">创建第一个版本以开始审阅流程</Typography>}
+                        primary="暂无审阅版本"
+                        secondary="创建第一个版本以开始审阅流程"
+                        primaryTypographyProps={{ variant: 'body2', color: 'text.disabled' }}
+                        secondaryTypographyProps={{ variant: 'caption' }}
                       />
                     </ListItem>
                   ) : (
                     sortedVersions.map((version) => (
                       <ListItem
                         key={version.id}
-                        disablePadding
+                        button
+                        selected={selectedVersionId === version.id}
+                        onClick={() => setSelectedVersionId(version.id)}
                         sx={{
                           borderBottom: 1,
                           borderColor: 'divider',
+                          '&.Mui-selected': {
+                            bgcolor: 'action.selected',
+                          },
                         }}
                       >
-                        <ListItemButton
-                          selected={selectedVersionId === version.id}
-                          onClick={() => setSelectedVersionId(version.id)}
-                          sx={{
-                            '&.Mui-selected': {
-                              bgcolor: 'action.selected',
-                            },
-                          }}
-                        >
                         <ListItemIcon sx={{ minWidth: 36 }}>
                           <Chip
                             label={version.versionNo}
@@ -1335,7 +1205,7 @@ const ReviewCenterDialog: React.FC<ReviewCenterDialogProps> = ({ open, onClose }
                           }
                           secondary={
                             <Box>
-                              <Typography variant="caption" color="text.disabled" sx={{ display: 'block' }}>
+                              <Typography variant="caption" color="text.disabled" display="block">
                                 {formatTime(version.createdAt)}
                               </Typography>
                               <Box sx={{ display: 'flex', gap: 0.5, mt: 0.5 }}>
@@ -1357,7 +1227,6 @@ const ReviewCenterDialog: React.FC<ReviewCenterDialogProps> = ({ open, onClose }
                           }
                           sx={{ my: 0.5 }}
                         />
-                        </ListItemButton>
                       </ListItem>
                     ))
                   )}
@@ -1405,14 +1274,14 @@ const ReviewCenterDialog: React.FC<ReviewCenterDialogProps> = ({ open, onClose }
 
                     {selectedVersion.reviewedBy && (
                       <Alert severity="info" sx={{ mb: 2 }} icon={false}>
-                        <Typography variant="caption" sx={{ display: 'block' }}>
+                        <Typography variant="caption" display="block">
                           <strong>审核人：</strong>{selectedVersion.reviewedBy}
                         </Typography>
-                        <Typography variant="caption" sx={{ display: 'block' }}>
+                        <Typography variant="caption" display="block">
                           <strong>审核时间：</strong>{selectedVersion.reviewedAt ? formatTime(selectedVersion.reviewedAt) : '-'}
                         </Typography>
                         {selectedVersion.reviewComment && (
-                          <Typography variant="caption" sx={{ display: 'block', mt: 0.5 }}>
+                          <Typography variant="caption" display="block" sx={{ mt: 0.5 }}>
                             <strong>审核意见：</strong>{selectedVersion.reviewComment}
                           </Typography>
                         )}

@@ -130,21 +130,11 @@ export interface DiffChange {
   newValue: unknown;
 }
 
-export interface AnnotationDiffChange {
-  annotationId: string;
-  title: string;
-  type: 'added' | 'removed' | 'modified';
-  field?: string;
-  oldValue?: unknown;
-  newValue?: unknown;
-}
-
 export interface DiffResult {
   added: Fragment[];
   removed: Fragment[];
   modified: DiffChange[];
   unchanged: string[];
-  annotationDiff: AnnotationDiffChange[];
 }
 
 export interface AlignmentVerification {

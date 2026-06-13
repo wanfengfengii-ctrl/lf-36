@@ -15,8 +15,6 @@ import {
   Typography,
   Divider,
   Autocomplete,
-  Checkbox,
-  FormControlLabel,
 } from '@mui/material';
 import {
   Save as SaveIcon,
@@ -33,7 +31,6 @@ import type {
   AnnotationType,
   AnnotationStatus,
   AnnotationPriority,
-  AnnotationBounds,
 } from '../../types';
 
 interface AnnotationEditorDialogProps {
@@ -41,7 +38,6 @@ interface AnnotationEditorDialogProps {
   onClose: () => void;
   annotation?: Annotation | null;
   defaultFragmentId?: string | null;
-  defaultBounds?: AnnotationBounds | null;
 }
 
 const AnnotationEditorDialog: React.FC<AnnotationEditorDialogProps> = ({
@@ -49,7 +45,6 @@ const AnnotationEditorDialog: React.FC<AnnotationEditorDialogProps> = ({
   onClose,
   annotation,
   defaultFragmentId,
-  defaultBounds,
 }) => {
   const {
     addAnnotation,
@@ -72,11 +67,6 @@ const AnnotationEditorDialog: React.FC<AnnotationEditorDialogProps> = ({
   const [tagsInput, setTagsInput] = useState('');
   const [tags, setTags] = useState<string[]>([]);
   const [versionTag, setVersionTag] = useState('');
-  const [boundsEnabled, setBoundsEnabled] = useState(false);
-  const [boundsX, setBoundsX] = useState('');
-  const [boundsY, setBoundsY] = useState('');
-  const [boundsW, setBoundsW] = useState('');
-  const [boundsH, setBoundsH] = useState('');
 
   const isEdit = Boolean(annotation);
 
@@ -93,19 +83,6 @@ const AnnotationEditorDialog: React.FC<AnnotationEditorDialogProps> = ({
         setTags(annotation.tags);
         setTagsInput('');
         setVersionTag(annotation.versionTag || '');
-        if (annotation.bounds) {
-          setBoundsEnabled(true);
-          setBoundsX(String(Math.round(annotation.bounds.x)));
-          setBoundsY(String(Math.round(annotation.bounds.y)));
-          setBoundsW(String(Math.round(annotation.bounds.width)));
-          setBoundsH(String(Math.round(annotation.bounds.height)));
-        } else {
-          setBoundsEnabled(false);
-          setBoundsX('');
-          setBoundsY('');
-          setBoundsW('');
-          setBoundsH('');
-        }
       } else {
         setTitle('');
         setContent('');
@@ -117,36 +94,12 @@ const AnnotationEditorDialog: React.FC<AnnotationEditorDialogProps> = ({
         setTags([]);
         setTagsInput('');
         setVersionTag('');
-        if (defaultBounds) {
-          setBoundsEnabled(true);
-          setBoundsX(String(Math.round(defaultBounds.x)));
-          setBoundsY(String(Math.round(defaultBounds.y)));
-          setBoundsW(String(Math.round(defaultBounds.width)));
-          setBoundsH(String(Math.round(defaultBounds.height)));
-        } else {
-          setBoundsEnabled(false);
-          setBoundsX('');
-          setBoundsY('');
-          setBoundsW('');
-          setBoundsH('');
-        }
       }
     }
-  }, [open, annotation, defaultFragmentId, selectedFragmentId, defaultBounds]);
-
-  const buildBounds = (): AnnotationBounds | null => {
-    if (!boundsEnabled) return null;
-    const x = parseFloat(boundsX);
-    const y = parseFloat(boundsY);
-    const w = parseFloat(boundsW);
-    const h = parseFloat(boundsH);
-    if (isNaN(x) || isNaN(y) || isNaN(w) || isNaN(h) || w <= 0 || h <= 0) return null;
-    return { x, y, width: w, height: h };
-  };
+  }, [open, annotation, defaultFragmentId, selectedFragmentId]);
 
   const handleSave = () => {
     if (!title.trim()) return;
-    const bounds = buildBounds();
 
     if (annotation) {
       updateAnnotation(annotation.id, {
@@ -159,7 +112,6 @@ const AnnotationEditorDialog: React.FC<AnnotationEditorDialogProps> = ({
         assignee: assignee.trim() || null,
         tags,
         versionTag: versionTag.trim() || null,
-        bounds,
       });
     } else {
       addAnnotation({
@@ -170,7 +122,6 @@ const AnnotationEditorDialog: React.FC<AnnotationEditorDialogProps> = ({
         priority,
         tags,
         assignee: assignee.trim() || null,
-        bounds,
       });
     }
     onClose();
@@ -311,55 +262,6 @@ const AnnotationEditorDialog: React.FC<AnnotationEditorDialogProps> = ({
               ))}
             </Select>
           </FormControl>
-
-          <Box sx={{ mt: 2 }}>
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={boundsEnabled}
-                  onChange={(e) => setBoundsEnabled(e.target.checked)}
-                  size="small"
-                />
-              }
-              label={<Typography variant="body2">指定局部区域范围</Typography>}
-            />
-            {boundsEnabled && (
-              <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1.5, mt: 1 }}>
-                <TextField
-                  size="small"
-                  label="中心 X"
-                  type="number"
-                  value={boundsX}
-                  onChange={(e) => setBoundsX(e.target.value)}
-                  slotProps={{ htmlInput: { step: 1 } }}
-                />
-                <TextField
-                  size="small"
-                  label="中心 Y"
-                  type="number"
-                  value={boundsY}
-                  onChange={(e) => setBoundsY(e.target.value)}
-                  slotProps={{ htmlInput: { step: 1 } }}
-                />
-                <TextField
-                  size="small"
-                  label="宽度"
-                  type="number"
-                  value={boundsW}
-                  onChange={(e) => setBoundsW(e.target.value)}
-                  slotProps={{ htmlInput: { step: 1, min: 1 } }}
-                />
-                <TextField
-                  size="small"
-                  label="高度"
-                  type="number"
-                  value={boundsH}
-                  onChange={(e) => setBoundsH(e.target.value)}
-                  slotProps={{ htmlInput: { step: 1, min: 1 } }}
-                />
-              </Box>
-            )}
-          </Box>
 
           <Autocomplete
             freeSolo

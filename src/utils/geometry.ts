@@ -416,7 +416,7 @@ export function calculateSchemesDiff(
     }
   }
 
-  return { added, removed, modified, unchanged, annotationDiff: [] };
+  return { added, removed, modified, unchanged };
 }
 
 export function verifyAlignment(
