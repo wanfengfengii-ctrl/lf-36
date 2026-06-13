@@ -25,10 +25,14 @@ export interface Fragment {
 export interface Scheme {
   id: string;
   name: string;
-  createdAt: number;
   updatedAt: number;
+  createdAt: number;
   fragmentMap: Record<string, Fragment>;
   fragmentOrder: string[];
+  referenceLines: ReferenceLine[];
+  history: HistoryEntry[];
+  historyIndex: number;
+  thumbnail?: string;
 }
 
 export interface Point {
@@ -60,6 +64,7 @@ export interface HistoryEntry {
   schemeId: string;
   fragmentMap: Record<string, Fragment>;
   fragmentOrder: string[];
+  referenceLines: ReferenceLine[];
   timestamp: number;
   description: string;
 }
@@ -152,6 +157,7 @@ export type UndoRedoAction =
   | 'align'
   | 'reorder'
   | 'import'
+  | 'reference'
   | 'batch';
 
 export interface AppState {
@@ -160,8 +166,6 @@ export interface AppState {
   selectedFragmentId: string | null;
   conflicts: OverlapInfo[];
   edgeFits: EdgeFitScore[];
-  history: HistoryEntry[];
-  historyIndex: number;
   toasts: ToastMessage[];
   conflictThreshold: number;
   snapEnabled: boolean;

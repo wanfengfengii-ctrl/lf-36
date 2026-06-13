@@ -187,7 +187,9 @@ const FragmentList: React.FC = () => {
                     </IconButton>
                   </Tooltip>
                   <Tooltip title={
-                    conflictIds.has(fragment.id)
+                    fragment.locked
+                      ? '锁定的碎片无法修改对位状态'
+                      : conflictIds.has(fragment.id)
                       ? '存在重叠冲突，需先解决冲突'
                       : fragment.aligned
                       ? '取消对位'
@@ -197,7 +199,7 @@ const FragmentList: React.FC = () => {
                       <IconButton
                         size="small"
                         color={fragment.aligned ? 'success' : 'default'}
-                        disabled={conflictIds.has(fragment.id)}
+                        disabled={conflictIds.has(fragment.id) || fragment.locked}
                         onClick={(e) => {
                           e.stopPropagation();
                           toggleAligned(fragment.id);

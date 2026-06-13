@@ -163,8 +163,6 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
   selectedFragmentId: null,
   conflicts: [],
   edgeFits: [],
-  history: [],
-  historyIndex: -1,
   toasts: [],
   conflictThreshold: 0.3,
   snapEnabled: true,
@@ -189,15 +187,18 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     const stored = loadFromStorage();
     if (stored && Object.keys(stored.schemes).length > 0) {
       const firstId = stored.activeSchemeId || Object.keys(stored.schemes)[0];
+      const firstScheme = stored.schemes[firstId];
       set({
         schemes: stored.schemes,
         activeSchemeId: firstId,
+        referenceLines: firstScheme?.referenceLines || [],
       });
     } else {
       const mock = createMockScheme();
       set({
         schemes: { [mock.id]: mock },
         activeSchemeId: mock.id,
+        referenceLines: mock.referenceLines || [],
       });
       get().persist();
     }
@@ -254,9 +255,7 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
       schemes: { ...s.schemes, [scheme.id]: scheme },
       activeSchemeId: scheme.id,
       selectedFragmentId: null,
-      history: [],
-      historyIndex: -1,
-      referenceLines: [],
+      referenceLines: scheme.referenceLines || [],
       activeSnapLines: [],
     }));
     get().persist();
@@ -266,11 +265,11 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
   setActiveScheme: (schemeId) => {
     const s = get();
     if (!s.schemes[schemeId]) return;
+    const targetScheme = s.schemes[schemeId];
     set({
       activeSchemeId: schemeId,
       selectedFragmentId: null,
-      history: [],
-      historyIndex: -1,
+      referenceLines: targetScheme.referenceLines || [],
       activeSnapLines: [],
     });
     get().recalculateConflicts();
@@ -407,9 +406,10 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     if (!frag) return;
 
     if (frag.locked) {
-      const allowedFields: (keyof Fragment)[] = ['locked', 'aligned'];
+      const allowedFields: (keyof Fragment)[] = ['locked'];
       const hasDisallowedUpdate = Object.keys(updates).some(key => !allowedFields.includes(key as keyof Fragment));
       if (hasDisallowedUpdate) {
+        s.addToast('warning', '锁定的碎片无法修改');
         return;
       }
     }
@@ -531,6 +531,10 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
     if (!scheme) return;
     const frag = scheme.fragmentMap[fragmentId];
     if (!frag) return;
+    if (frag.locked) {
+      s.addToast('warning', '锁定的碎片无法修改对位状态');
+      return;
+    }
 
     if (!frag.aligned) {
       const hasConflict = s.conflicts.some(
@@ -579,7 +583,7 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
       let hasChanges = false;
       conflictIds.forEach((id) => {
         const f = updatedMap[id];
-        if (f && f.aligned) {
+        if (f && f.aligned && !f.locked) {
           updatedMap = {
             ...updatedMap,
             [id]: { ...f, aligned: false },
@@ -622,40 +626,50 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
       schemeId: scheme.id,
       fragmentMap: deepClone(scheme.fragmentMap),
       fragmentOrder: [...scheme.fragmentOrder],
+      referenceLines: deepClone(scheme.referenceLines),
       timestamp: Date.now(),
       description,
     };
-    const newHistory = s.history.slice(0, s.historyIndex + 1);
+    const newHistory = scheme.history.slice(0, scheme.historyIndex + 1);
     newHistory.push(entry);
     if (newHistory.length > HISTORY_LIMIT) {
       newHistory.shift();
     }
-    set({
+    const updatedScheme = {
+      ...scheme,
       history: newHistory,
       historyIndex: newHistory.length - 1,
+    };
+    set({
+      schemes: { ...s.schemes, [scheme.id]: updatedScheme },
       lastAction: action,
     });
   },
 
   undo: () => {
     const s = get();
-    if (s.historyIndex <= 0) {
+    const scheme = s.activeSchemeId ? s.schemes[s.activeSchemeId] : null;
+    if (!scheme) {
       s.addToast('warning', '没有可撤销的操作');
       return;
     }
-    const newIndex = s.historyIndex - 1;
-    const entry = s.history[newIndex];
-    const scheme = s.schemes[entry.schemeId];
-    if (!scheme) return;
+    if (scheme.historyIndex <= 0) {
+      s.addToast('warning', '没有可撤销的操作');
+      return;
+    }
+    const newIndex = scheme.historyIndex - 1;
+    const entry = scheme.history[newIndex];
     const updatedScheme = {
       ...scheme,
       fragmentMap: deepClone(entry.fragmentMap),
       fragmentOrder: [...entry.fragmentOrder],
+      referenceLines: deepClone(entry.referenceLines || []),
+      historyIndex: newIndex,
       updatedAt: Date.now(),
     };
     set({
       schemes: { ...s.schemes, [scheme.id]: updatedScheme },
-      historyIndex: newIndex,
+      referenceLines: deepClone(entry.referenceLines || []),
     });
     s.recalculateConflicts();
     s.recalculateEdgeFits();
@@ -665,23 +679,28 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
 
   redo: () => {
     const s = get();
-    if (s.historyIndex >= s.history.length - 1) {
+    const scheme = s.activeSchemeId ? s.schemes[s.activeSchemeId] : null;
+    if (!scheme) {
       s.addToast('warning', '没有可重做的操作');
       return;
     }
-    const newIndex = s.historyIndex + 1;
-    const entry = s.history[newIndex];
-    const scheme = s.schemes[entry.schemeId];
-    if (!scheme) return;
+    if (scheme.historyIndex >= scheme.history.length - 1) {
+      s.addToast('warning', '没有可重做的操作');
+      return;
+    }
+    const newIndex = scheme.historyIndex + 1;
+    const entry = scheme.history[newIndex];
     const updatedScheme = {
       ...scheme,
       fragmentMap: deepClone(entry.fragmentMap),
       fragmentOrder: [...entry.fragmentOrder],
+      referenceLines: deepClone(entry.referenceLines || []),
+      historyIndex: newIndex,
       updatedAt: Date.now(),
     };
     set({
       schemes: { ...s.schemes, [scheme.id]: updatedScheme },
-      historyIndex: newIndex,
+      referenceLines: deepClone(entry.referenceLines || []),
     });
     s.recalculateConflicts();
     s.recalculateEdgeFits();
@@ -743,6 +762,9 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
   },
 
   addReferenceLine: (type, position) => {
+    const s = get();
+    const scheme = s.activeSchemeId ? s.schemes[s.activeSchemeId] : null;
+    if (!scheme) return;
     const line: ReferenceLine = {
       id: generateReferenceLineId(),
       type,
@@ -750,27 +772,74 @@ export const useAppStore = create<AppState & AppActions>((set, get) => ({
       color: '#B8860B',
       locked: false,
     };
-    set((s) => ({ referenceLines: [...s.referenceLines, line] }));
-    get().addToast('success', '已添加参考线');
+    s.pushHistory('添加参考线', 'reference');
+    const newLines = [...scheme.referenceLines, line];
+    const updatedScheme = {
+      ...scheme,
+      referenceLines: newLines,
+      updatedAt: Date.now(),
+    };
+    set({
+      schemes: { ...s.schemes, [scheme.id]: updatedScheme },
+      referenceLines: newLines,
+    });
+    s.persist();
+    s.addToast('success', '已添加参考线');
   },
 
   updateReferenceLine: (id, updates) => {
-    set((s) => ({
-      referenceLines: s.referenceLines.map(line =>
-        line.id === id ? { ...line, ...updates } : line
-      ),
-    }));
+    const s = get();
+    const scheme = s.activeSchemeId ? s.schemes[s.activeSchemeId] : null;
+    if (!scheme) return;
+    const newLines = scheme.referenceLines.map(line =>
+      line.id === id ? { ...line, ...updates } : line
+    );
+    const updatedScheme = {
+      ...scheme,
+      referenceLines: newLines,
+      updatedAt: Date.now(),
+    };
+    set({
+      schemes: { ...s.schemes, [scheme.id]: updatedScheme },
+      referenceLines: newLines,
+    });
   },
 
   removeReferenceLine: (id) => {
-    set((s) => ({
-      referenceLines: s.referenceLines.filter(line => line.id !== id),
-    }));
+    const s = get();
+    const scheme = s.activeSchemeId ? s.schemes[s.activeSchemeId] : null;
+    if (!scheme) return;
+    s.pushHistory('删除参考线', 'reference');
+    const newLines = scheme.referenceLines.filter(line => line.id !== id);
+    const updatedScheme = {
+      ...scheme,
+      referenceLines: newLines,
+      updatedAt: Date.now(),
+    };
+    set({
+      schemes: { ...s.schemes, [scheme.id]: updatedScheme },
+      referenceLines: newLines,
+    });
+    s.persist();
   },
 
   clearReferenceLines: () => {
-    set({ referenceLines: [] });
-    get().addToast('info', '已清除所有参考线');
+    const s = get();
+    const scheme = s.activeSchemeId ? s.schemes[s.activeSchemeId] : null;
+    if (!scheme) return;
+    if (scheme.referenceLines.length === 0) return;
+    s.pushHistory('清除所有参考线', 'reference');
+    const updatedScheme = {
+      ...scheme,
+      referenceLines: [],
+      updatedAt: Date.now(),
+    };
+    set({
+      schemes: { ...s.schemes, [scheme.id]: updatedScheme },
+      referenceLines: [],
+    });
+    s.persist();
+    s.addToast('info', '已清除所有参考线');
   },
 
   setMagnifierEnabled: (enabled) => {

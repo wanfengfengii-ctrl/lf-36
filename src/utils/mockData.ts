@@ -68,6 +68,9 @@ export function createMockScheme(): Scheme {
     updatedAt: now,
     fragmentMap,
     fragmentOrder,
+    referenceLines: [],
+    history: [],
+    historyIndex: -1,
   };
 }
 
@@ -80,5 +83,8 @@ export function createEmptyScheme(name?: string): Scheme {
     updatedAt: now,
     fragmentMap: {},
     fragmentOrder: [],
+    referenceLines: [],
+    history: [],
+    historyIndex: -1,
   };
 }

@@ -85,7 +85,7 @@ const ToolbarDivider = styled(Divider)(({ theme }) => ({
 
 const AppToolbar: React.FC = () => {
   const {
-    undo, redo, history, historyIndex, toasts, addToast, persist, schemes, activeSchemeId, conflicts,
+    undo, redo, toasts, addToast, persist, schemes, activeSchemeId, conflicts,
     snapEnabled, setSnapEnabled, snapThreshold, setSnapThreshold,
     ruler, setRulerVisible,
     magnifier, setMagnifierEnabled, setMagnifierZoom,
@@ -117,8 +117,8 @@ const AppToolbar: React.FC = () => {
   const [compareTargetId, setCompareTargetId] = useState('');
 
   const scheme = activeSchemeId ? schemes[activeSchemeId] : null;
-  const canUndo = historyIndex > 0;
-  const canRedo = historyIndex < history.length - 1;
+  const canUndo = scheme ? scheme.historyIndex > 0 : false;
+  const canRedo = scheme ? scheme.historyIndex < scheme.history.length - 1 : false;
   const snapshots = getSnapshots();
 
   const handleImportClick = () => {

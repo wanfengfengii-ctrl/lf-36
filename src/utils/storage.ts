@@ -12,7 +12,12 @@ export function loadFromStorage(): StorageData | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    return JSON.parse(raw) as StorageData;
+    const data = JSON.parse(raw) as StorageData;
+    Object.values(data.schemes).forEach(scheme => {
+      if (!scheme.history) scheme.history = [];
+      if (typeof scheme.historyIndex !== 'number') scheme.historyIndex = -1;
+    });
+    return data;
   } catch {
     return null;
   }
